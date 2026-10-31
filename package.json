@@ -1,0 +1,17 @@
+{
+  "name": "dsh-tr-bridge",
+  "version": "0.1.0-rc.1",
+  "description": "Local TokenRouter CLI bridge for DeepSeek Harness",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "cordis.patch.yml", "README.md"],
+  "scripts": { "test": "node --test" },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/superqin7/dsh-tr-bridge.git"
+  },
+  "keywords": ["deepseek-harness", "dsh-plugin", "tokenrouter", "codex-cli", "grok-cli", "multi-agent"],
+  "engines": { "node": ">=20" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

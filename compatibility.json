@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "checkedHost": "0.2.1-rc.5",
+  "checkScope": "Installed desktop package contracts for tools.register, subprocess.spawn, Windows CreateProcessW, and workingDirectory.ensure. Not a live plugin-load or in-app tool-call test.",
+  "windowsPluginLoad": "未验证",
+  "windowsInAppToolCall": "未验证"
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "TokenRouter 桥接",
+    "description": "把任务派发给已经通过 TokenRouter 登录的 tr codex 和 tr grok。不要求额外的 API Key。"
+  }
+}

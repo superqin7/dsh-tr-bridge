@@ -10,6 +10,23 @@
  * Login stays in the existing TokenRouter config. This plugin does not read
  * or forward an API key.
  */
+import {
+  agentIds,
+  agentProviders,
+  assertModelAllowed,
+  defaultSelectionFile,
+  emptySelection,
+  formatCatalog,
+  modelArgs,
+  readSelection,
+  refreshAgent,
+  resolveModelChoice,
+  selectionFromConfig,
+  validateMemberId,
+  validateModelId,
+  workspaceOrTemp,
+  writeSelection,
+} from './models.js'
 import { resolveTrLauncher } from './resolve-tr.js'
 
 export const name = 'dsh-tr-bridge'
@@ -21,17 +38,31 @@ const MAX_RESULT_CHARS = 24_000
 const MAX_STDERR_CHARS = 4_000
 const GROK_READ_TOOLS = 'read_file,grep,list_dir'
 
-const AGENTS = new Set(['codex', 'grok'])
+const AGENTS = new Set(agentIds())
 
 export const toolParameters = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    agent: { type: 'string', enum: ['codex', 'grok'], description: '目标代理 codex 或 grok' },
+    agent: { type: 'string', enum: agentIds(), description: '目标代理。当前为 codex 或 grok；新增 agent 时由注册表扩展，不写死模型 ID。' },
     task: { type: 'string', description: '完整自包含任务。目标 CLI 不会自动获得 Harness 聊天历史。' },
+    model: { type: 'string', description: '可选。本次任务的模型 ID，必须来自 tr_bridge_models 刷新到的该 agent 清单。显式值优先于插件默认值。省略则使用已保存默认值；都没有则不传 --model，沿用 CLI 默认。' },
+    member: { type: 'string', description: '可选。AgentTeams 成员 ID。未传 model 时使用该成员已保存的模型，且成员绑定的 agent 必须一致。' },
     dryRun: { type: 'boolean', description: 'true 仅预览，不消耗 Token；默认 false。' },
   },
   required: ['agent', 'task'],
+}
+
+export const modelToolParameters = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    action: { type: 'string', enum: ['refresh', 'set-default', 'clear-default'], description: 'refresh 重新查询授权清单；set-default 保存默认模型；clear-default 清除已保存默认值。' },
+    agent: { type: 'string', enum: agentIds(), description: 'set-default 和 clear-default 必填。refresh 省略时查询全部已注册 agent。' },
+    model: { type: 'string', description: 'set-default 使用的模型 ID。必须出现在本次刷新的该 agent 可选项中。' },
+    member: { type: 'string', description: '可选。只保存或清除这个成员的模型，不影响其他成员和全局默认值。' },
+  },
+  required: ['action'],
 }
 
 export function commandFor(agent, task, launcher = 'tr', options = {}) {
@@ -43,7 +74,7 @@ export function commandFor(agent, task, launcher = 'tr', options = {}) {
 
   // Direct argv. The task is one argument and is never interpolated into a shell string.
   if (agent === 'codex') {
-    return [launcher, 'codex', 'exec', '--sandbox', 'read-only', '--color', 'never', '--ephemeral', '--', task]
+    return [launcher, 'codex', 'exec', '--sandbox', 'read-only', '--color', 'never', '--ephemeral', ...modelArgs(agent, options.model), '--', task]
   }
   const prompt = `请只阅读、分析或讨论。不得修改文件、执行有副作用的命令或发起部署。\n\n${task}`
   const argv = [
@@ -59,7 +90,7 @@ export function commandFor(agent, task, launcher = 'tr', options = {}) {
     '--deny', 'WebFetch',
   ]
   if (options.grokWebSearch !== true) argv.push('--disable-web-search')
-  argv.push('-p', prompt)
+  argv.push(...modelArgs(agent, options.model), '-p', prompt)
   return argv
 }
 
@@ -116,6 +147,10 @@ function readConfig(config = {}) {
     trCommand,
     timeoutMs,
     grokWebSearch: config.grokWebSearch === true,
+    selection: selectionFromConfig(config),
+    selectionFile: typeof config.selectionFile === 'string' && config.selectionFile.trim()
+      ? config.selectionFile.trim()
+      : null,
   }
 }
 
@@ -129,7 +164,11 @@ export function previewLaunch(launcher, agent, task, options = {}) {
   const limit = agent === 'grok'
     ? 'Grok 使用 dontAsk、只读工具允许列表和拒绝规则。这不是 Windows 内核沙箱；操作系统级隔离未验证。'
     : 'Codex 请求 --sandbox read-only。真实限制由 Codex CLI 和操作系统决定。'
-  return `TR Bridge 预览（未执行）\n工作目录：${options.cwd}\n启动器：${launcher.file}（${launcher.source}）\n参数：${JSON.stringify(hidden)}\n目标：${agent}\n${limit}${skipped}`
+  const modelLine = options.model
+    ? `模型：${options.model}（${options.modelSource || 'explicit'}）`
+    : '模型：未指定，不传 --model，沿用 CLI 当前默认。'
+  const checked = options.modelChecked ? `\n授权：已在本次 ${agent} 清单中确认。` : ''
+  return `TR Bridge 预览（未执行）\n工作目录：${options.cwd}\n启动器：${launcher.file}（${launcher.source}）\n${modelLine}${checked}\n参数：${JSON.stringify(hidden)}\n目标：${agent}\n${limit}${skipped}`
 }
 
 export async function invoke({ subprocess, argv, cwd, signal, timeoutMs = DEFAULT_TIMEOUT_MS }) {
@@ -187,6 +226,35 @@ function launchError(error) {
   return new Error(`tr 调用失败：${redact(message)}`)
 }
 
+function selectionFile(settings) {
+  return settings.selectionFile || defaultSelectionFile()
+}
+
+function loadSaved(settings) {
+  return readSelection(selectionFile(settings))
+}
+
+async function authorize(agent, model, launcher, subprocess, cwd, signal) {
+  const catalog = await refreshAgent({ agent, launcher: launcher.file, subprocess, cwd, signal })
+  try {
+    return assertModelAllowed(agent, model, { [agent]: catalog })
+  } catch (error) {
+    if (!/不在本次/.test(error.message)) throw error
+    for (const other of agentIds()) {
+      if (other === agent) continue
+      try {
+        const extra = await refreshAgent({ agent: other, launcher: launcher.file, subprocess, cwd, signal })
+        if (extra.models.some(item => item.id === model && item.selectable)) {
+          throw new Error(`模型 ${model} 属于 ${other}，不能用于 ${agent}。`)
+        }
+      } catch (inner) {
+        if (/属于/.test(inner.message)) throw inner
+      }
+    }
+    throw error
+  }
+}
+
 export function apply(ctx, config = {}) {
   if (typeof ctx?.tools?.register !== 'function') {
     throw new Error('DSH tools 服务不可用。请在 Desktop 基础 profile 中启用本插件。')
@@ -196,19 +264,86 @@ export function apply(ctx, config = {}) {
     throw new Error('timeoutMs 必须是正数')
   }
 
+  const output = {
+    schema: { type: 'string' },
+    render(_args, value) { return [{ type: 'text', text: String(value) }] },
+  }
+
+  ctx.tools.register({
+    name: 'tr_bridge_models',
+    description: '刷新 TokenRouter 当前设备上 Codex / Grok CLI 实际列出的模型，或保存某个 agent 的默认模型。不读取、不要求 API Key。Harness 0.2.1-rc.5 没有可自动生成的动态下拉配置页，所以刷新和保存通过本工具完成。清单代表查询当时的 CLI 授权，不保证下一次请求成功，也不缓存已撤销模型。',
+    parameters: modelToolParameters,
+    output,
+    timeoutMs: 90_000,
+    isConcurrencySafe: () => false,
+    presentCall: args => ({
+      card: 'generic',
+      title: `TokenRouter 模型 ${args?.action ?? ''}`,
+      kind: 'read',
+      rawInput: args,
+    }),
+    async execute(args, exec) {
+      const action = args?.action
+      const subprocess = ctx.get?.('subprocess') ?? ctx.subprocess
+      if (!subprocess?.spawn) throw new Error('DSH subprocess 服务不可用，请检查插件是否已启用。')
+      const launcher = resolveTrLauncher(settings.trCommand)
+      const directory = ctx.workingDirectory ?? ctx.get?.('workingDirectory')
+      const cwd = workspaceOrTemp(await resolveWorkspace(exec, directory).catch(() => ''))
+      const file = selectionFile(settings)
+      try {
+        if (action === 'refresh') {
+          const names = args?.agent ? [args.agent] : agentIds()
+          const blocks = []
+          for (const agent of names) {
+            if (!agentProviders[agent]) throw new Error('仅支持已注册的 agent')
+            const catalog = await refreshAgent({ agent, launcher: launcher.file, subprocess, cwd, signal: exec?.signal })
+            blocks.push(formatCatalog(agent, catalog))
+          }
+          return `模型清单已按本次查询替换。查询失败时不会保留旧列表。\n\n${blocks.join('\n\n')}`
+        }
+        if (action !== 'set-default' && action !== 'clear-default') throw new Error('仅支持 refresh、set-default 或 clear-default。')
+        const agent = args?.agent
+        if (!agentProviders[agent]) throw new Error('保存或清除默认模型时必须指定 agent。')
+        const saved = loadSaved(settings)
+        const member = typeof args?.member === 'string' && args.member.trim() ? validateMemberId(args.member) : ''
+        if (action === 'clear-default') {
+          if (member) delete saved.members[member]
+          else delete saved.defaults[agent]
+          writeSelection(file, saved)
+          const profileModel = member
+            ? settings.selection.members[member]?.model
+            : settings.selection.defaults[agent]
+          const profileNote = profileModel
+            ? `插件配置仍指定 ${profileModel}，它优先于保存文件。要恢复 CLI 默认，请去掉 profile 里的这项。`
+            : '未传 model 时将沿用 CLI 默认，不传 --model。'
+          return member
+            ? `已清除成员 ${member} 的已保存模型。其他成员和默认值不变。${profileNote}`
+            : `已清除 ${agent} 的已保存默认模型。${profileNote}`
+        }
+        const model = validateModelId(args?.model)
+        const match = await authorize(agent, model, launcher, subprocess, cwd, exec?.signal)
+        if (member) saved.members[member] = { agent, model }
+        else saved.defaults[agent] = model
+        writeSelection(file, saved)
+        return member
+          ? `已保存成员 ${member} 的 ${agent} 模型 ${match.name}（${match.id}）。切换 agent 不会覆盖这个选择。`
+          : `已保存 ${agent} 的默认模型 ${match.name}（${match.id}）。显式 model 参数仍然优先。`
+      } catch (error) {
+        throw launchError(error)
+      }
+    },
+  })
+
   ctx.tools.register({
     name: 'tr_bridge',
-    description: '使用已经登录的 TokenRouter tr codex / tr grok 派发独立任务。不读取、不要求 API Key。先用 dryRun 查看实际启动器路径和参数；用户明确要求后再执行。Codex 请求 read-only sandbox。Grok 使用 dontAsk 和只读工具允许列表，这不是 Windows 内核沙箱。可并发调用不同 agent。',
+    description: '使用已经登录的 TokenRouter tr codex / tr grok 派发独立任务。不读取、不要求 API Key。可选 model 必须来自 tr_bridge_models 的本次清单；省略时用插件默认值，没有默认值则不传 --model。先用 dryRun 查看实际模型、启动参数和工作目录。Codex 请求 read-only sandbox。Grok 使用 dontAsk 和只读工具允许列表，这不是 Windows 内核沙箱。',
     parameters: toolParameters,
-    output: {
-      schema: { type: 'string' },
-      render(_args, value) { return [{ type: 'text', text: String(value) }] },
-    },
+    output,
     timeoutMs: settings.timeoutMs + 30_000,
     isConcurrencySafe: () => true,
     presentCall: args => ({
       card: 'generic',
-      title: `TokenRouter → ${args?.agent ?? '?'}`,
+      title: `TokenRouter → ${args?.agent ?? '?'}${args?.model ? ` / ${args.model}` : ''}`,
       kind: args?.dryRun ? 'read' : 'execute',
       rawInput: args,
     }),
@@ -216,10 +351,34 @@ export function apply(ctx, config = {}) {
       const agent = args?.agent
       const task = args?.task
       const launcher = resolveTrLauncher(settings.trCommand)
-      const argv = commandFor(agent, task, launcher.file, settings)
       const directory = ctx.workingDirectory ?? ctx.get?.('workingDirectory')
       const cwd = await resolveWorkspace(exec, directory)
-      if (args?.dryRun === true) return previewLaunch(launcher, agent, task, { ...settings, cwd })
+      let saved = emptySelection()
+      if (!args?.model) {
+        try { saved = loadSaved(settings) } catch (error) { throw launchError(error) }
+      }
+      const choice = resolveModelChoice({
+        agent,
+        explicit: args?.model,
+        member: args?.member,
+        config: settings.selection,
+        saved,
+      })
+      let modelChecked = false
+      if (choice.model) {
+        const subprocess = ctx.get?.('subprocess') ?? ctx.subprocess
+        if (!subprocess?.spawn) throw new Error('DSH subprocess 服务不可用，不能复核模型授权。')
+        try {
+          await authorize(agent, choice.model, launcher, subprocess, cwd, exec?.signal)
+          modelChecked = true
+        } catch (error) {
+          throw launchError(error)
+        }
+      }
+      const argv = commandFor(agent, task, launcher.file, { ...settings, model: choice.model })
+      if (args?.dryRun === true) {
+        return previewLaunch(launcher, agent, task, { ...settings, cwd, model: choice.model, modelSource: choice.source, modelChecked })
+      }
       const subprocess = ctx.get?.('subprocess') ?? ctx.subprocess
       if (!subprocess?.spawn) throw new Error('DSH subprocess 服务不可用，请检查插件是否已启用。')
       try {
@@ -230,7 +389,8 @@ export function apply(ctx, config = {}) {
           signal: exec?.signal,
           timeoutMs: settings.timeoutMs,
         })
-        return `[由 tr ${agent} 执行]\n${answer}`
+        const used = choice.model ? `，模型 ${choice.model}` : '，未指定模型，沿用 CLI 默认'
+        return `[由 tr ${agent} 执行${used}]\n${answer}`
       } catch (error) {
         throw launchError(error)
       }

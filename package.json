@@ -1,6 +1,6 @@
 {
   "name": "dsh-tr-bridge",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0-rc.3",
   "description": "Local TokenRouter CLI bridge for DeepSeek Harness. Uses the existing tr login and does not ask for an API key.",
   "type": "module",
   "main": "index.js",
@@ -14,6 +14,7 @@
   "files": [
     "index.js",
     "resolve-tr.js",
+    "models.js",
     "cordis.patch.yml",
     "README.md",
     "NOTICE.md",
@@ -25,7 +26,7 @@
     "compatibility.json"
   ],
   "icon": "./icon.svg",
-  "scripts": { "test": "node --test test/bridge.test.js test/resolve-tr.test.js" },
+  "scripts": { "test": "node --test test/bridge.test.js test/resolve-tr.test.js test/models.test.js" },
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -4,6 +4,10 @@
 #   trCommand: C:\path\to\tr.exe
 #   timeoutMs: 600000
 #   grokWebSearch: false
+#   defaults:
+#     codex: ""
+#     grok: ""
+#   members: {}
 - insert:
     - id: tr-bridge
       name: dsh-tr-bridge

@@ -2,7 +2,7 @@
 
 ![Status](https://img.shields.io/badge/status-preview-orange) ![Node](https://img.shields.io/badge/node-%3E%3D20-blue) ![License](https://img.shields.io/badge/license-MIT-green)
 
-> **预览版本 v0.1.0-rc.2 / Preview.** 社区开发的独立插件，非 DeepSeek Harness 官方组件，也不是 TokenRouter 官方组件。已对照本机安装的 DeepSeek Harness **0.2.1-rc.5** 插件契约做静态检查，并通过 Node 模拟测试。**Windows 桌面版的插件加载、工具出现和会话内真实派发仍是「未验证」。** 请勿将本项目标记为 Stable、Official 或 Production Ready。
+> **预览版本 v0.1.0-rc.4 / Preview.** 社区开发的独立插件，非 DeepSeek Harness 官方组件，也不是 TokenRouter 官方组件。已对照本机安装的 DeepSeek Harness **0.2.1-rc.5** 插件契约做静态检查，并通过 Node 模拟测试。**Windows 桌面版的插件加载、工具出现和会话内真实派发仍是「未验证」。** 请勿将本项目标记为 Stable、Official 或 Production Ready。
 
 > **开源来源声明 / Attribution：** 本项目受开源社区项目 **[dsh-agent-conductor（MJorgin）](https://github.com/MJorgin/dsh-agent-conductor)**、**[dsh-agent-teams（NanmiCoder）](https://github.com/NanmiCoder/dsh-agent-teams)** 和 **[dsh-agent-arena（Tikzen）](https://github.com/Tikzen/dsh-agent-arena)** 的启发。尤其借鉴了前者的外部 CLI 代理派发思路，以及后两者的多 Agent 协作场景。**这是独立实现的非官方社区项目，不是上述项目的官方分支或官方维护版本，也不声称首创相关概念。** 项目完整源代码以 [MIT License](./LICENSE) 公开。具体出处请见 [NOTICE.md](./NOTICE.md)。
 
@@ -38,7 +38,7 @@
    ```
 
    `CommandType` 必须是 `Application`，`Source` 必须以 `tr.exe` 结尾。如果看到 `Function` 或 `Alias`，桌面版无法调用它。
-3. 把本仓库放到例如 `D:\dsh-tr-bridge`。目录根下要直接有 `package.json`、`cordis.patch.yml`、`index.js` 和 `resolve-tr.js`。
+3. 把本仓库放到例如 `D:\dsh-tr-bridge`。目录根下要直接有 `package.json`、`cordis.patch.yml`、`index.js`、`resolve-tr.js` 和 `lib/client.js`。
 4. 打开 DeepSeek Harness 0.2.1-rc.5 桌面版，进入 **插件**，添加本地目录 `D:\dsh-tr-bridge`，安装后 **启用**。如果界面要求重启，重启应用。不需要 `npm install`，本包没有第三方依赖。
 5. 如果桌面版提示找不到 `tr`，在插件行配置里设置 `trCommand` 为上一步看到的完整路径，例如 `C:\Users\你的用户名\AppData\Local\Programs\TokenRouter\tr.exe`。不要填 `.cmd`、`.bat` 或 PowerShell 函数名。
 6. 选择一个不含重要文件的临时 Git 工作区，新建会话。先发送：
@@ -53,11 +53,14 @@
 
 ## 能力与限制
 
-- 一个工具：`tr_bridge(agent, task, dryRun)`。`agent` 只能是 `codex` 或 `grok`。
+- 两个工具：`tr_bridge(agent, task, model?, member?, dryRun)` 和 `tr_bridge_models(action, agent?, model?, member?)`。
+- `model` 可选。不传、也没有已保存默认值时，不添加 `--model`，沿用 CLI 当前默认。显式 `model` 优先于插件默认值。
+- 模型清单不写死。Codex 用 `tr codex debug models` 的完整 JSON；Grok 用 `tr grok models` 的全部标准输出。按查询命令归属分类，不按模型名称前缀过滤。出现分页标记但命令不能翻页时，拒绝把当前页当成全部。
+- 插件行提供原生配置页，键是 `dsh-tr-bridge#tr-bridge`。页面用宿主 Connection RPC 调用和工具相同的刷新、保存逻辑。浏览器不读取 TokenRouter 登录凭据，也没有 API Key 输入框。缺少 `lib/client.js` 会导致声明了 `dsh.client` 的插件激活失败，所以这个文件随包提供，不依赖另一次客户端构建。客户端加载失败不会改变宿主工具的启用状态。
 - 工作目录使用当前会话的 `workingDirectory.ensure()`。用户后来用 `cd` 换过目录时，不会退回会话创建时的原始路径。服务不可用时才读取 `session.header.cwd`。
 - 不读取、不保存、不转发 TokenRouter API Key。登录仍由 `tr` 自己的配置负责。
-- Codex 实际执行 `tr.exe codex exec --sandbox read-only --color never --ephemeral -- <task>`。`--` 用来避免以 `-` 开头的任务被当成参数。
-- Grok 实际执行 `tr.exe grok --permission-mode dontAsk --tools read_file,grep,list_dir --no-subagents --deny Bash --deny Edit --deny Write --deny MCPTool --deny WebFetch --disable-web-search -p <约束提示 + task>`。
+- Codex 实际执行 `tr.exe codex exec --sandbox read-only --color never --ephemeral [--model <id>] -- <task>`。`--model` 只在选定模型时出现，并且位于 `--` 之前。
+- Grok 实际执行 `tr.exe grok --permission-mode dontAsk --tools read_file,grep,list_dir --no-subagents --deny Bash --deny Edit --deny Write --deny MCPTool --deny WebFetch --disable-web-search [--model <id>] -p <约束提示 + task>`。
 - Grok 的工具允许列表和拒绝规则不是 Windows 内核沙箱。Grok 文档中的 `--sandbox read-only` 依赖 Linux Landlock 或 macOS Seatbelt；无法应用时会警告并继续。**因此本插件不把该标志当作 Windows 安全边界，Windows 上的操作系统级隔离是「未验证」。**
 - DeepSeek Harness 会从子进程环境里去掉名称匹配 `KEY|PASSWORD|SECRET|TOKEN` 的变量，以及 `DSH_*`。这是宿主行为。本插件不把 API Key 写回去。只要 `tr` 使用磁盘上的已有登录，就不需要额外密钥。
 - 两个任务互相独立，可以并行，都会消耗各自模型额度。
@@ -72,6 +75,22 @@
 | `trCommand` | `tr` | `tr` 或 `tr.exe` 的完整路径。相对路径、`.cmd`、`.bat`、`.ps1` 会被拒绝 |
 | `timeoutMs` | `600000` | 单次执行上限，限制在 1 秒到 30 分钟 |
 | `grokWebSearch` | `false` | 只有显式设为 `true` 才去掉 `--disable-web-search` |
+| `defaults.codex` / `defaults.grok` | 空 | profile 里的默认模型 ID。空字符串表示不指定。它优先于保存文件，但仍要在每次使用前通过 CLI 清单复核 |
+| `members.<id>.agent` / `members.<id>.model` | 无 | 给未来的 AgentTeams 成员单独保存模型。成员之间互不影响 |
+
+## 在 Harness 里选择模型
+
+配置页在 **插件详情** 里，不在设置里。打开 TokenRouter 桥接后，点标题栏里文字为 **配置** 的按钮。说明和组件列表之间也会直接显示 Codex / Grok 表单。0.2.1-rc.5 不会给 `plugins.row.config` 画一个写着「配置」的按钮；那个槽只把组件标题变成箭头，无障碍名称才是「配置 …」。组件行上的箭头仍然保留，键是 `dsh-tr-bridge#tr-bridge`。
+
+1. 打开页面时自动加载。**刷新模型列表** 会重新运行 `tr codex debug models` 和 `tr grok models`。下拉项只来自这一次输出。
+2. 选择后点 **保存默认模型**。两个 agent 各自保存，切换时不会互相覆盖。离开页面不会写入未保存的修改。
+3. CLI 若标明某个 ID 使用自己的 API Key，该 ID 以及以它加连字符开头的条目会归到「路由别名」。它们仍可选择，但不是模型身份。分类只依据 CLI 输出，不按名称写死。
+4. 查询失败、授权撤销或当前选择不在新清单里时，页面会标明状态，并且不会把旧清单继续当成可选项。
+5. 某一次任务要换模型时，仍可调用 `tr_bridge` 并传入 `model`。这次的值优先于默认值。`tr_bridge_models` 继续可用，保存的是同一份选择文件。
+6. 不传 `model`、也没有默认值时，参数里没有 `--model`。`clear-default` 只删除保存文件里的选择；如果 profile 的 `defaults` 或 `members` 仍写着模型，它继续优先。
+7. 给未来成员预留选择时，工具调用加上 `member`。配置页不编辑成员绑定。目前没有 AgentTeams 群聊。
+
+清单是查询当时 CLI 报告的授权，不保证下一次模型请求成功。查询失败时丢弃旧清单，不会把已撤销模型继续标成可用。2026-10-31 在 `D:\AI-team\tr-bridge-test` 直接调用 `tr` 0.9.24 / Codex CLI v0.162.1：显式 `--model gpt-5.6-terra` 时 CLI 横幅是 `model: gpt-5.6-terra`，不传 `--model` 时同一工作区横幅是 `model: gpt-5.6-sol`。这是 CLI 横幅，不是模型回复。Grok 帮助里有 `--model`，但这次没有拿到 Grok CLI 自己的模型横幅，实机是否改写显式 Grok 模型仍是 **待验证**。桌面版里的安装、配置页点击、刷新、保存和重启后保留仍是 **未验证**。
 
 ## Windows 启动问题
 
@@ -110,7 +129,7 @@ npm test
 
 本项目的桥接逻辑为独立编写，无运行时依赖，不直接复制上述项目代码。引用链接用于说明设计灵感和尊重原作者贡献；相关商标、项目名称及其原始源码归各自权利人所有。详细说明请读 [NOTICE.md](./NOTICE.md)。
 
-**状态：v0.1.0-rc.2，预览。** Node 模拟测试覆盖命令参数、Windows 启动器选择和凭据脱敏。Windows DeepSeek Harness `0.2.1-rc.5` 的真实安装、运行和取消仍是「未验证」。问题请开 GitHub Issue，附脱敏日志、版本和复现步骤，**不要上传 TokenRouter Key 或包含客户资料的截图**。
+**状态：v0.1.0-rc.4，预览。** Node 模拟测试覆盖命令参数、Windows 启动器选择和凭据脱敏。Windows DeepSeek Harness `0.2.1-rc.5` 的真实安装、运行和取消仍是「未验证」。问题请开 GitHub Issue，附脱敏日志、版本和复现步骤，**不要上传 TokenRouter Key 或包含客户资料的截图**。
 
 ## Open source
 

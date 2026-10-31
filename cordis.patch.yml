@@ -1,9 +1,14 @@
-# Host-only plugin for DeepSeek Harness 0.2.1-rc.5.
-# Uses the host subprocess service. Does not override UI and does not read API keys.
+# Host plugin for DeepSeek Harness 0.2.1-rc.5.
+# Tools use the host subprocess service. The config page is a separate client bundle.
+# This patch does not read API keys.
 # Optional config, applied by a later patch row if needed:
 #   trCommand: C:\path\to\tr.exe
 #   timeoutMs: 600000
 #   grokWebSearch: false
+#   defaults:
+#     codex: ""
+#     grok: ""
+#   members: {}
 - insert:
     - id: tr-bridge
       name: dsh-tr-bridge

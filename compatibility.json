@@ -1,7 +1,9 @@
 {
   "schemaVersion": 1,
   "checkedHost": "0.2.1-rc.5",
-  "checkScope": "Installed desktop package contracts for tools.register, subprocess.spawn, Windows CreateProcessW, and workingDirectory.ensure. Not a live plugin-load or in-app tool-call test.",
+  "checkScope": "Installed desktop package contracts for tools.register, subprocess.spawn, Windows CreateProcessW, and workingDirectory.ensure. Model discovery uses tr codex debug models and tr grok models. Not a live plugin-load or in-app tool-call test.",
   "windowsPluginLoad": "未验证",
-  "windowsInAppToolCall": "未验证"
+  "windowsInAppToolCall": "未验证",
+  "dynamicConfigDropdown": "已实现。0.2.1-rc.5 的 plugins.row.config 不渲染可见文字为「配置」的按钮，只把组件标题变成无障碍名称为「配置 {name}」的箭头。因此同时注册 plugins.detail.actions（可见按钮「配置」）和 plugins.bundle.config（键 dsh-tr-bridge，表单直接出现在插件详情）。行配置键仍是 dsh-tr-bridge#tr-bridge。入口是随包提供的 lib/client.js。下拉项来自宿主 Connection RPC 的当次 CLI 查询，不是 schema enum。桌面版点击、刷新、保存和重启后保留仍是未验证。",
+  "trModelOverride": "Codex：2026-10-31 直接调用 tr 0.9.24 / Codex CLI v0.162.1，显式 --model gpt-5.6-terra 时 CLI 横幅为 model: gpt-5.6-terra；不传 --model 时同一工作区横幅为 model: gpt-5.6-sol。这不是模型回复文本。Grok：帮助里有 --model，但这次没有拿到 CLI 横幅，实机是否改写显式模型仍是待验证。Harness 桌面版内的两条路径都仍是未验证。"
 }

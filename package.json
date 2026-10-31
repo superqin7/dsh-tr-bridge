@@ -1,6 +1,6 @@
 {
   "name": "dsh-tr-bridge",
-  "version": "0.1.0-rc.3",
+  "version": "0.1.0-rc.4",
   "description": "Local TokenRouter CLI bridge for DeepSeek Harness. Uses the existing tr login and does not ask for an API key.",
   "type": "module",
   "main": "index.js",

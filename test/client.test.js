@@ -25,7 +25,11 @@ test('the client entry is a real file and is declared as the web bundle', () => 
   assert.equal(source.includes('window.__ModuleLoader__.load'), true)
   assert.equal(source.includes("id: 'dsh-tr-bridge'"), true)
   assert.equal(source.includes('plugins.row.config'), true)
+  assert.equal(source.includes('plugins.bundle.config'), true)
+  assert.equal(source.includes('plugins.detail.actions'), true)
   assert.equal(source.includes('dsh-tr-bridge#tr-bridge'), true)
+  assert.equal(source.includes("key: 'dsh-tr-bridge'"), true)
+  assert.equal(source.includes('配置'), true)
   assert.equal(source.includes("require('react')"), true)
   assert.equal(source.includes('@deepseek-ai/dsh-client-ui-primitives'), true)
 })
@@ -68,6 +72,7 @@ test('the factory registers the row config page and can render without a model a
     },
   })
   assert.equal(registered.some(item => item[0] === 'slot' && item[1] === 'dsh-tr-bridge#tr-bridge'), true)
+  assert.equal(registered.some(item => item[0] === 'slot' && item[1] === 'dsh-tr-bridge'), true)
   const Slot = calls[0]
   assert.equal(Slot({ t: key => key, view: 'summary' }), 'summary')
   const page = Slot({ t: key => `文案:${key}`, view: 'page' })
@@ -103,7 +108,10 @@ test('the page asks the host to refresh and renders only returned model ids', as
   let Slot
   plugin.apply({
     locale: { register() {} },
-    slots: { inject(_name, register) { register() }, register(_options, component) { Slot = component } },
+    slots: {
+      inject(_name, register) { register() },
+      register(options, component) { if (options.key === 'dsh-tr-bridge#tr-bridge') Slot = component },
+    },
     connection: {
       rpc: {
         async call(channel, endpoint, payload) {
@@ -137,6 +145,41 @@ test('the page asks the host to refresh and renders only returned model ids', as
   assert.deepEqual(calls.map(item => item.endpoint), ['status', 'refresh'])
   assert.equal(calls.every(item => item.channel === '/dsh-tr-bridge'), true)
   assert.equal(JSON.stringify(calls).includes('listed-model'), false)
+})
+
+test('the plugin detail gets a visible 配置 button without dropping the row key', () => {
+  const react = {
+    createElement(type, props, ...children) {
+      return { type, props: props || {}, children: children.flat(Infinity).filter(Boolean) }
+    },
+  }
+  const plugin = loadFactory().factory((id) => {
+    if (id === 'react') return react
+    if (id === '@deepseek-ai/dsh-client-ui-primitives') return { Button(props) { return props } }
+    throw new Error(`unexpected require ${id}`)
+  })
+  const registered = []
+  plugin.apply({
+    locale: { register() {} },
+    slots: {
+      inject(name, register) {
+        if (name === 'plugins.row.config') throw new Error('slot "plugins.row.config" is not declared')
+        register()
+      },
+      register(options, component) { registered.push({ options, component }) },
+    },
+  })
+  assert.equal(registered.some(item => item.options.name === 'plugins.bundle.config' && item.options.key === 'dsh-tr-bridge'), true)
+  assert.equal(registered.some(item => item.options.name === 'plugins.detail.actions' && item.options.id === 'dsh-tr-bridge-config'), true)
+  assert.equal(registered.some(item => item.options.key === 'dsh-tr-bridge#tr-bridge'), false)
+  const button = registered.find(item => item.options.id === 'dsh-tr-bridge-config').component
+  assert.equal(button({ t: key => key, subject: { kind: 'bundle', pkg: { name: 'other' } } }), null)
+  const ours = button({
+    t: key => (key === 'configure' ? '配置' : key),
+    subject: { kind: 'bundle', pkg: { name: 'dsh-tr-bridge' } },
+  })
+  assert.equal(ours.children.includes('配置'), true)
+  assert.doesNotThrow(() => ours.props.onClick())
 })
 
 test('a primitive load failure still returns a plugin body', () => {

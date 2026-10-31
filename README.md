@@ -2,7 +2,7 @@
 
 ![Status](https://img.shields.io/badge/status-preview-orange) ![Node](https://img.shields.io/badge/node-%3E%3D20-blue) ![License](https://img.shields.io/badge/license-MIT-green)
 
-> **预览版本 v0.1.0-rc.3 / Preview.** 社区开发的独立插件，非 DeepSeek Harness 官方组件，也不是 TokenRouter 官方组件。已对照本机安装的 DeepSeek Harness **0.2.1-rc.5** 插件契约做静态检查，并通过 Node 模拟测试。**Windows 桌面版的插件加载、工具出现和会话内真实派发仍是「未验证」。** 请勿将本项目标记为 Stable、Official 或 Production Ready。
+> **预览版本 v0.1.0-rc.4 / Preview.** 社区开发的独立插件，非 DeepSeek Harness 官方组件，也不是 TokenRouter 官方组件。已对照本机安装的 DeepSeek Harness **0.2.1-rc.5** 插件契约做静态检查，并通过 Node 模拟测试。**Windows 桌面版的插件加载、工具出现和会话内真实派发仍是「未验证」。** 请勿将本项目标记为 Stable、Official 或 Production Ready。
 
 > **开源来源声明 / Attribution：** 本项目受开源社区项目 **[dsh-agent-conductor（MJorgin）](https://github.com/MJorgin/dsh-agent-conductor)**、**[dsh-agent-teams（NanmiCoder）](https://github.com/NanmiCoder/dsh-agent-teams)** 和 **[dsh-agent-arena（Tikzen）](https://github.com/Tikzen/dsh-agent-arena)** 的启发。尤其借鉴了前者的外部 CLI 代理派发思路，以及后两者的多 Agent 协作场景。**这是独立实现的非官方社区项目，不是上述项目的官方分支或官方维护版本，也不声称首创相关概念。** 项目完整源代码以 [MIT License](./LICENSE) 公开。具体出处请见 [NOTICE.md](./NOTICE.md)。
 
@@ -80,7 +80,7 @@
 
 ## 在 Harness 里选择模型
 
-配置页在 **插件** 里，不在设置里。打开本插件的行，使用 **配置**。页面会向宿主查询当前授权模型，并分别给出 Codex 和 Grok 下拉框。
+配置页在 **插件详情** 里，不在设置里。打开 TokenRouter 桥接后，点标题栏里文字为 **配置** 的按钮。说明和组件列表之间也会直接显示 Codex / Grok 表单。0.2.1-rc.5 不会给 `plugins.row.config` 画一个写着「配置」的按钮；那个槽只把组件标题变成箭头，无障碍名称才是「配置 …」。组件行上的箭头仍然保留，键是 `dsh-tr-bridge#tr-bridge`。
 
 1. 打开页面时自动加载。**刷新模型列表** 会重新运行 `tr codex debug models` 和 `tr grok models`。下拉项只来自这一次输出。
 2. 选择后点 **保存默认模型**。两个 agent 各自保存，切换时不会互相覆盖。离开页面不会写入未保存的修改。
@@ -129,7 +129,7 @@ npm test
 
 本项目的桥接逻辑为独立编写，无运行时依赖，不直接复制上述项目代码。引用链接用于说明设计灵感和尊重原作者贡献；相关商标、项目名称及其原始源码归各自权利人所有。详细说明请读 [NOTICE.md](./NOTICE.md)。
 
-**状态：v0.1.0-rc.3，预览。** Node 模拟测试覆盖命令参数、Windows 启动器选择和凭据脱敏。Windows DeepSeek Harness `0.2.1-rc.5` 的真实安装、运行和取消仍是「未验证」。问题请开 GitHub Issue，附脱敏日志、版本和复现步骤，**不要上传 TokenRouter Key 或包含客户资料的截图**。
+**状态：v0.1.0-rc.4，预览。** Node 模拟测试覆盖命令参数、Windows 启动器选择和凭据脱敏。Windows DeepSeek Harness `0.2.1-rc.5` 的真实安装、运行和取消仍是「未验证」。问题请开 GitHub Issue，附脱敏日志、版本和复现步骤，**不要上传 TokenRouter Key 或包含客户资料的截图**。
 
 ## Open source
 

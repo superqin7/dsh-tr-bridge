@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "TokenRouter Bridge",
+    "description": "Dispatch tasks to tr codex and tr grok that are already signed in through TokenRouter. Does not ask for an API key."
+  }
+}

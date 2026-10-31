@@ -12,6 +12,7 @@
 - DSH 会在子进程环境中去掉名称匹配 `KEY|PASSWORD|SECRET|TOKEN` 的变量。插件不把密钥写回环境，也不要求用户再提供 API Key。登录应已经保存在 TokenRouter 自己的配置里。
 - 输出脱敏只覆盖常见 Token 形态和 `API密钥` / `TR_SETUP_KEY` 片段，不能保证识别所有敏感数据，也不是 DLP。
 - 模型清单只通过 `tr codex debug models` 和 `tr grok models` 获取。插件不读取 TokenRouter、Codex 或 Grok 的凭据文件，也不把 API Key 写进子进程环境。这两条命令没有翻页参数；输出若带分页标记，插件拒绝把当前页当成全部模型。
+- 配置页是浏览器半侧。它只通过宿主 Connection RPC 调用上述同一套刷新和保存逻辑，不读取登录凭据，不提供 API Key 输入框，也不运行 `tr status`。RPC 响应不返回任务文本、启动器完整路径或原始 CLI 状态。
 - 已保存的默认模型放在 `%APPDATA%\dsh-tr-bridge\model-selection.json`，不是登录配置。使用前会重新查询清单；查询失败时不沿用旧清单。
 
 ## 发布状态

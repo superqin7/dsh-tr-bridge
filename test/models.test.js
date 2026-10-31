@@ -50,6 +50,34 @@ test('Codex parser refuses a paginated document instead of using the first page'
 test('Grok parser keeps every CLI id, including ones that do not match a prefix', () => {
   const parsed = parseGrokModels(grokText)
   assert.deepEqual(parsed.models.map(item => item.id), ['grok-4.6', 'tokenrouter-grok-4.7', 'brand-new-model'])
+  assert.equal(parsed.models.find(item => item.id === 'grok-4.6').kind, 'model')
+  assert.equal(parsed.models.find(item => item.id === 'tokenrouter-grok-4.7').kind, 'routed')
+})
+
+test('Route aliases come from the CLI notice, not a hardcoded name', () => {
+  const parsed = parseGrokModels([
+    "Model 'routehub' is using its own API key.",
+    'Available models:',
+    '  - routehub',
+    '  - routehub-fast',
+    '  - plain-model',
+  ].join('\n'))
+  assert.equal(parsed.models.find(item => item.id === 'routehub').kind, 'alias')
+  assert.equal(parsed.models.find(item => item.id === 'routehub-fast').kind, 'routed')
+  assert.equal(parsed.models.find(item => item.id === 'plain-model').kind, 'model')
+  assert.equal(parsed.models.find(item => item.id === 'routehub').selectable, true)
+})
+
+test('Codex alias kind is set only by an explicit catalog field', () => {
+  const parsed = parseCodexCatalog(JSON.stringify({
+    models: [
+      { slug: 'router-x', display_name: 'Router X', visibility: 'list', kind: 'alias' },
+      { slug: 'gpt-5.6-terra', visibility: 'list' },
+    ],
+  }))
+  assert.equal(parsed.models.find(item => item.id === 'router-x').kind, 'alias')
+  assert.equal(parsed.models.find(item => item.id === 'router-x').selectable, true)
+  assert.equal(parsed.models.find(item => item.id === 'gpt-5.6-terra').kind, 'model')
 })
 
 test('Grok parser refuses an output that says more pages exist', () => {

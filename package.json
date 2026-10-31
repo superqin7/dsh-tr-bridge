@@ -6,6 +6,7 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./client": "./lib/client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
     "./package.json": "./package.json",
@@ -15,6 +16,8 @@
     "index.js",
     "resolve-tr.js",
     "models.js",
+    "config-api.js",
+    "lib/client.js",
     "cordis.patch.yml",
     "README.md",
     "NOTICE.md",
@@ -26,7 +29,7 @@
     "compatibility.json"
   ],
   "icon": "./icon.svg",
-  "scripts": { "test": "node --test test/bridge.test.js test/resolve-tr.test.js test/models.test.js" },
+  "scripts": { "test": "node --test test/bridge.test.js test/resolve-tr.test.js test/models.test.js test/config-api.test.js test/client.test.js" },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -34,5 +37,15 @@
   },
   "keywords": ["deepseek-harness", "dsh-plugin", "tokenrouter", "codex-cli", "grok-cli", "windows"],
   "engines": { "node": ">=20" },
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-connection"
+      ]
+    }
+  }
 }

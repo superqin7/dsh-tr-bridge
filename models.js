@@ -14,6 +14,56 @@ export const CATALOG_STDOUT_LIMIT = 8 * 1024 * 1024
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const MEMBER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 const PAGE_KEYS = ['next', 'next_cursor', 'nextCursor', 'cursor', 'has_more']
+const ALIAS_NOTICE = /Model '([^']+)' is using its own API key/g
+const ALIAS_FIELD = /^(?:alias|router|route)$/
+
+function redactProbe(text) {
+  return String(text)
+    .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:sk|ghp|gho|github_pat)_[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+    .replace(/\b(?:api[_-]?key|password|TR_SETUP_KEY)\s*[:=]\s*\S+/gi, '[REDACTED]')
+}
+
+export function aliasRootsFromNotices(text) {
+  const roots = []
+  for (const match of String(text).matchAll(ALIAS_NOTICE)) {
+    if (MODEL_ID.test(match[1]) && !roots.includes(match[1])) roots.push(match[1])
+  }
+  return roots
+}
+
+export function classifyListedKind(id, roots) {
+  if (roots.includes(id)) return 'alias'
+  if (roots.some(root => id.startsWith(`${root}-`))) return 'routed'
+  return 'model'
+}
+
+function codexKind(entry) {
+  const kind = typeof entry?.kind === 'string' ? entry.kind.toLowerCase() : ''
+  const modelType = typeof entry?.model_type === 'string' ? entry.model_type.toLowerCase() : ''
+  if (entry?.is_alias === true || entry?.routing_alias === true) return 'alias'
+  if (ALIAS_FIELD.test(kind) || ALIAS_FIELD.test(modelType)) return 'alias'
+  return 'model'
+}
+
+export function classifyQueryError(error) {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  if (error?.code === 'TR_LAUNCHER_UNUSABLE' || /无法启动 tr|找不到 tr\.exe|找不到可执行文件|ENOENT|was not found on PATH|找不到指定的文件/i.test(message)) {
+    return 'launcher-missing'
+  }
+  if (error?.code === 'MODEL_CATALOG_INCOMPLETE' || /分页|不完整|无法确认已经读完/.test(message)) {
+    return 'incomplete'
+  }
+  if (/超时/.test(message)) return 'timeout'
+  if (/not logged in|please log in|sign in to|unauthorized|authentication failed|invalid api key|未登录|请先登录|登录已失效|授权已撤销|authorization revoked/i.test(message)) {
+    return 'authorization-revoked'
+  }
+  return 'query-failed'
+}
+
+export function classifyCliFailure(stderr, stdout = '') {
+  return classifyQueryError(new Error(redactProbe(`${stderr}\n${stdout}`)))
+}
 
 export function validateModelId(model) {
   if (typeof model !== 'string' || !MODEL_ID.test(model)) {
@@ -65,6 +115,7 @@ export function parseCodexCatalog(stdout) {
       id: entry.slug,
       name: typeof entry.display_name === 'string' && entry.display_name.trim() ? entry.display_name.trim() : entry.slug,
       selectable: !hiddenByCli && !unsupported,
+      kind: codexKind(entry),
       agent: 'codex',
     })
   }
@@ -80,6 +131,7 @@ export function parseGrokModels(stdout) {
   const lines = text.split(/\r?\n/)
   const start = lines.findIndex(line => line.trim() === 'Available models:')
   if (start < 0) throw new Error('tr grok models 没有返回 Available models 清单。')
+  const roots = aliasRootsFromNotices(text)
   const models = []
   let interrupted = false
   for (const line of lines.slice(start + 1)) {
@@ -95,7 +147,13 @@ export function parseGrokModels(stdout) {
     if (!MODEL_ID.test(match[1])) {
       throw incomplete('Grok 清单含有无法安全识别的模型 ID，拒绝把其余输出当成全部模型。')
     }
-    models.push({ id: match[1], name: match[1], selectable: true, agent: 'grok' })
+    models.push({
+      id: match[1],
+      name: match[1],
+      selectable: true,
+      kind: classifyListedKind(match[1], roots),
+      agent: 'grok',
+    })
   }
   if (models.length === 0) throw new Error('Grok 模型清单没有可识别的模型 ID。')
   return { models, excluded: 0 }
@@ -222,9 +280,39 @@ export function assertModelAllowed(agent, model, catalogs) {
   throw new Error(`模型 ${id} 不在本次 ${agent} 授权清单中。请先刷新；已撤销的模型不能继续使用。`)
 }
 
+function catalogMark(item) {
+  if (item.kind === 'alias' || item.kind === 'routed') return ' [CLI 标明的路由别名]'
+  return ''
+}
+
+export async function authorizeModel({ agent, model, launcher, subprocess, cwd, signal, refresh = refreshAgent }) {
+  const id = validateModelId(model)
+  const catalog = await refresh({ agent, launcher, subprocess, cwd, signal })
+  try {
+    return { match: assertModelAllowed(agent, id, { [agent]: catalog }), catalog }
+  } catch (error) {
+    if (!/不在本次/.test(error.message)) throw error
+    for (const other of agentIds()) {
+      if (other === agent) continue
+      try {
+        const extra = await refresh({ agent: other, launcher, subprocess, cwd, signal })
+        if (extra.models.some(item => item.id === id && item.selectable)) {
+          throw new Error(`模型 ${id} 属于 ${other}，不能用于 ${agent}。`)
+        }
+      } catch (inner) {
+        if (/属于/.test(inner.message)) throw inner
+      }
+    }
+    throw error
+  }
+}
+
 export function formatCatalog(agent, parsed) {
   const selectable = parsed.models.filter(item => item.selectable)
-  const lines = selectable.map(item => item.name === item.id ? `- ${item.id}` : `- ${item.name}（${item.id}）`)
+  const lines = selectable.map(item => {
+    const label = item.name === item.id ? item.id : `${item.name}（${item.id}）`
+    return `- ${label}${catalogMark(item)}`
+  })
   const excluded = parsed.excluded > 0
     ? `\n另有 ${parsed.excluded} 个未放入可选项（CLI 标记不可选，或 ID 无法安全识别）。`
     : ''
@@ -280,9 +368,17 @@ export async function refreshAgent({ agent, launcher, subprocess, cwd, signal })
     signal,
   })
   if (result.exitCode !== 0) {
-    throw new Error(`查询 ${agent} 模型失败，退出码 ${result.exitCode ?? 'unknown'}。不会沿用旧清单。`)
+    const error = new Error(`查询 ${agent} 模型失败，退出码 ${result.exitCode ?? 'unknown'}。不会沿用旧清单。`)
+    error.catalogCode = classifyCliFailure(result.stderr, result.stdout)
+    throw error
   }
-  const parsed = provider.parse(result.stdout)
+  let parsed
+  try {
+    parsed = provider.parse(result.stdout)
+  } catch (error) {
+    if (!error.catalogCode) error.catalogCode = classifyCliFailure(result.stderr, result.stdout)
+    throw error
+  }
   return {
     agent,
     fetchedAt: new Date().toISOString(),

@@ -38,7 +38,7 @@
    ```
 
    `CommandType` 必须是 `Application`，`Source` 必须以 `tr.exe` 结尾。如果看到 `Function` 或 `Alias`，桌面版无法调用它。
-3. 把本仓库放到例如 `D:\dsh-tr-bridge`。目录根下要直接有 `package.json`、`cordis.patch.yml`、`index.js` 和 `resolve-tr.js`。
+3. 把本仓库放到例如 `D:\dsh-tr-bridge`。目录根下要直接有 `package.json`、`cordis.patch.yml`、`index.js`、`resolve-tr.js` 和 `lib/client.js`。
 4. 打开 DeepSeek Harness 0.2.1-rc.5 桌面版，进入 **插件**，添加本地目录 `D:\dsh-tr-bridge`，安装后 **启用**。如果界面要求重启，重启应用。不需要 `npm install`，本包没有第三方依赖。
 5. 如果桌面版提示找不到 `tr`，在插件行配置里设置 `trCommand` 为上一步看到的完整路径，例如 `C:\Users\你的用户名\AppData\Local\Programs\TokenRouter\tr.exe`。不要填 `.cmd`、`.bat` 或 PowerShell 函数名。
 6. 选择一个不含重要文件的临时 Git 工作区，新建会话。先发送：
@@ -56,7 +56,7 @@
 - 两个工具：`tr_bridge(agent, task, model?, member?, dryRun)` 和 `tr_bridge_models(action, agent?, model?, member?)`。
 - `model` 可选。不传、也没有已保存默认值时，不添加 `--model`，沿用 CLI 当前默认。显式 `model` 优先于插件默认值。
 - 模型清单不写死。Codex 用 `tr codex debug models` 的完整 JSON；Grok 用 `tr grok models` 的全部标准输出。按查询命令归属分类，不按模型名称前缀过滤。出现分页标记但命令不能翻页时，拒绝把当前页当成全部。
-- Harness 0.2.1-rc.5 **没有**已发布的动态下拉配置页。动态下拉需要预构建的 `dsh.client` / `lib/client.js`，缺失会导致激活失败。本插件不声明 `dsh.client`，也不用固定 enum 假装有下拉框。刷新和保存默认模型通过 `tr_bridge_models` 完成。
+- 插件行提供原生配置页，键是 `dsh-tr-bridge#tr-bridge`。页面用宿主 Connection RPC 调用和工具相同的刷新、保存逻辑。浏览器不读取 TokenRouter 登录凭据，也没有 API Key 输入框。缺少 `lib/client.js` 会导致声明了 `dsh.client` 的插件激活失败，所以这个文件随包提供，不依赖另一次客户端构建。客户端加载失败不会改变宿主工具的启用状态。
 - 工作目录使用当前会话的 `workingDirectory.ensure()`。用户后来用 `cd` 换过目录时，不会退回会话创建时的原始路径。服务不可用时才读取 `session.header.cwd`。
 - 不读取、不保存、不转发 TokenRouter API Key。登录仍由 `tr` 自己的配置负责。
 - Codex 实际执行 `tr.exe codex exec --sandbox read-only --color never --ephemeral [--model <id>] -- <task>`。`--model` 只在选定模型时出现，并且位于 `--` 之前。
@@ -80,21 +80,17 @@
 
 ## 在 Harness 里选择模型
 
-0.2.1-rc.5 的插件配置页不能提供动态下拉框和刷新按钮。不要在配置里手填一份固定模型 enum。可安装的用法是：
+配置页在 **插件** 里，不在设置里。打开本插件的行，使用 **配置**。页面会向宿主查询当前授权模型，并分别给出 Codex 和 Grok 下拉框。
 
-1. 先让模型调用 `tr_bridge_models`，`action=refresh`。它会分别运行 `tr codex debug models` 和 `tr grok models`，按 agent 显示名称和 ID。
-2. 要保存默认值，再调用 `action=set-default`，带上 `agent` 和刚出现的 `model`。Codex 与 Grok 各自保存，切换时不会互相覆盖。
-3. 某一次任务要换模型时，调用 `tr_bridge` 并传入 `model`。这次的值优先于默认值。
-4. 不传 `model`、也没有默认值时，参数里没有 `--model`。`clear-default` 只删除保存文件里的选择；如果 profile 的 `defaults` 或 `members` 仍写着模型，工具会说明它继续生效。
-5. 给未来成员预留选择时，加上 `member`。目前没有 AgentTeams 群聊；这个字段只保存独立绑定。
+1. 打开页面时自动加载。**刷新模型列表** 会重新运行 `tr codex debug models` 和 `tr grok models`。下拉项只来自这一次输出。
+2. 选择后点 **保存默认模型**。两个 agent 各自保存，切换时不会互相覆盖。离开页面不会写入未保存的修改。
+3. CLI 若标明某个 ID 使用自己的 API Key，该 ID 以及以它加连字符开头的条目会归到「路由别名」。它们仍可选择，但不是模型身份。分类只依据 CLI 输出，不按名称写死。
+4. 查询失败、授权撤销或当前选择不在新清单里时，页面会标明状态，并且不会把旧清单继续当成可选项。
+5. 某一次任务要换模型时，仍可调用 `tr_bridge` 并传入 `model`。这次的值优先于默认值。`tr_bridge_models` 继续可用，保存的是同一份选择文件。
+6. 不传 `model`、也没有默认值时，参数里没有 `--model`。`clear-default` 只删除保存文件里的选择；如果 profile 的 `defaults` 或 `members` 仍写着模型，它继续优先。
+7. 给未来成员预留选择时，工具调用加上 `member`。配置页不编辑成员绑定。目前没有 AgentTeams 群聊。
 
-清单是查询当时 CLI 报告的授权，不保证下一次模型请求成功。查询失败时丢弃旧清单，不会把已撤销模型继续标成可用。2026-10-31 在 `D:\AI-team\tr-bridge-test` 直接调用 `tr` 0.9.24 / Codex CLI v0.162.1：显式 `--model gpt-5.6-terra` 时 CLI 横幅是 `model: gpt-5.6-terra`，不传 `--model` 时同一工作区横幅是 `model: gpt-5.6-sol`。这是 CLI 横幅，不是模型回复。Grok 帮助里有 `--model`，但这次没有拿到 Grok CLI 自己的模型横幅，实机是否改写显式 Grok 模型仍是 **待验证**。桌面版里的刷新、保存和调用仍是 **未验证**。
-
-### 为什么配置页没有动态下拉框
-
-0.2.1-rc.5 的设置表单只展示插件 `.volatile()` 字段，而且没有已发布的客户端按 schema 自动生成页面。动态下拉、刷新按钮和运行时更新要由插件自己的浏览器半侧注册 `plugins.row.config`，键是 `dsh-tr-bridge#tr-bridge`。这要求 `package.json` 声明 `dsh.client`（`platform: web`），并提供已经构建的 `lib/client.js`。缺少这个文件时，宿主会拒绝激活整个插件。
-
-因此本版本不声明 `dsh.client`，也不在 `parameters` 里放固定模型 enum。可安装的选择方式就是上面的 `tr_bridge_models`。以后要做真正的配置页，应另加一个经过桌面版加载验证的 client bundle：打开页面时向宿主查询模型，刷新按钮重新执行同一条 CLI 查询，下拉项只来自当次输出。在那次桌面版验证完成之前，不能把配置页下拉框写成已经实现。
+清单是查询当时 CLI 报告的授权，不保证下一次模型请求成功。查询失败时丢弃旧清单，不会把已撤销模型继续标成可用。2026-10-31 在 `D:\AI-team\tr-bridge-test` 直接调用 `tr` 0.9.24 / Codex CLI v0.162.1：显式 `--model gpt-5.6-terra` 时 CLI 横幅是 `model: gpt-5.6-terra`，不传 `--model` 时同一工作区横幅是 `model: gpt-5.6-sol`。这是 CLI 横幅，不是模型回复。Grok 帮助里有 `--model`，但这次没有拿到 Grok CLI 自己的模型横幅，实机是否改写显式 Grok 模型仍是 **待验证**。桌面版里的安装、配置页点击、刷新、保存和重启后保留仍是 **未验证**。
 
 ## Windows 启动问题
 

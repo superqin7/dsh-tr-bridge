@@ -11,9 +11,14 @@
  * or forward an API key.
  */
 import {
+  applySelectionChange,
+  handleConfigRpc,
+  registerConfigChannel,
+} from './config-api.js'
+import {
   agentIds,
   agentProviders,
-  assertModelAllowed,
+  authorizeModel,
   defaultSelectionFile,
   emptySelection,
   formatCatalog,
@@ -22,10 +27,7 @@ import {
   refreshAgent,
   resolveModelChoice,
   selectionFromConfig,
-  validateMemberId,
-  validateModelId,
   workspaceOrTemp,
-  writeSelection,
 } from './models.js'
 import { resolveTrLauncher } from './resolve-tr.js'
 
@@ -235,24 +237,15 @@ function loadSaved(settings) {
 }
 
 async function authorize(agent, model, launcher, subprocess, cwd, signal) {
-  const catalog = await refreshAgent({ agent, launcher: launcher.file, subprocess, cwd, signal })
-  try {
-    return assertModelAllowed(agent, model, { [agent]: catalog })
-  } catch (error) {
-    if (!/不在本次/.test(error.message)) throw error
-    for (const other of agentIds()) {
-      if (other === agent) continue
-      try {
-        const extra = await refreshAgent({ agent: other, launcher: launcher.file, subprocess, cwd, signal })
-        if (extra.models.some(item => item.id === model && item.selectable)) {
-          throw new Error(`模型 ${model} 属于 ${other}，不能用于 ${agent}。`)
-        }
-      } catch (inner) {
-        if (/属于/.test(inner.message)) throw inner
-      }
-    }
-    throw error
-  }
+  const { match } = await authorizeModel({
+    agent,
+    model,
+    launcher: launcher.file,
+    subprocess,
+    cwd,
+    signal,
+  })
+  return match
 }
 
 export function apply(ctx, config = {}) {
@@ -271,7 +264,7 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register({
     name: 'tr_bridge_models',
-    description: '刷新 TokenRouter 当前设备上 Codex / Grok CLI 实际列出的模型，或保存某个 agent 的默认模型。不读取、不要求 API Key。Harness 0.2.1-rc.5 没有可自动生成的动态下拉配置页，所以刷新和保存通过本工具完成。清单代表查询当时的 CLI 授权，不保证下一次请求成功，也不缓存已撤销模型。',
+    description: '刷新 TokenRouter 当前设备上 Codex / Grok CLI 实际列出的模型，或保存某个 agent 的默认模型。不读取、不要求 API Key。插件页的配置界面调用同一套保存逻辑。清单代表查询当时的 CLI 授权，不保证下一次请求成功，也不缓存已撤销模型。',
     parameters: modelToolParameters,
     output,
     timeoutMs: 90_000,
@@ -289,7 +282,6 @@ export function apply(ctx, config = {}) {
       const launcher = resolveTrLauncher(settings.trCommand)
       const directory = ctx.workingDirectory ?? ctx.get?.('workingDirectory')
       const cwd = workspaceOrTemp(await resolveWorkspace(exec, directory).catch(() => ''))
-      const file = selectionFile(settings)
       try {
         if (action === 'refresh') {
           const names = args?.agent ? [args.agent] : agentIds()
@@ -302,32 +294,18 @@ export function apply(ctx, config = {}) {
           return `模型清单已按本次查询替换。查询失败时不会保留旧列表。\n\n${blocks.join('\n\n')}`
         }
         if (action !== 'set-default' && action !== 'clear-default') throw new Error('仅支持 refresh、set-default 或 clear-default。')
-        const agent = args?.agent
-        if (!agentProviders[agent]) throw new Error('保存或清除默认模型时必须指定 agent。')
-        const saved = loadSaved(settings)
-        const member = typeof args?.member === 'string' && args.member.trim() ? validateMemberId(args.member) : ''
-        if (action === 'clear-default') {
-          if (member) delete saved.members[member]
-          else delete saved.defaults[agent]
-          writeSelection(file, saved)
-          const profileModel = member
-            ? settings.selection.members[member]?.model
-            : settings.selection.defaults[agent]
-          const profileNote = profileModel
-            ? `插件配置仍指定 ${profileModel}，它优先于保存文件。要恢复 CLI 默认，请去掉 profile 里的这项。`
-            : '未传 model 时将沿用 CLI 默认，不传 --model。'
-          return member
-            ? `已清除成员 ${member} 的已保存模型。其他成员和默认值不变。${profileNote}`
-            : `已清除 ${agent} 的已保存默认模型。${profileNote}`
-        }
-        const model = validateModelId(args?.model)
-        const match = await authorize(agent, model, launcher, subprocess, cwd, exec?.signal)
-        if (member) saved.members[member] = { agent, model }
-        else saved.defaults[agent] = model
-        writeSelection(file, saved)
-        return member
-          ? `已保存成员 ${member} 的 ${agent} 模型 ${match.name}（${match.id}）。切换 agent 不会覆盖这个选择。`
-          : `已保存 ${agent} 的默认模型 ${match.name}（${match.id}）。显式 model 参数仍然优先。`
+        const changed = await applySelectionChange({
+          action: action === 'set-default' ? 'save' : 'clear',
+          agent: args?.agent,
+          model: args?.model,
+          member: args?.member,
+          settings,
+          launcher,
+          subprocess,
+          cwd,
+          signal: exec?.signal,
+        })
+        return changed.text
       } catch (error) {
         throw launchError(error)
       }
@@ -396,4 +374,13 @@ export function apply(ctx, config = {}) {
       }
     },
   })
+
+  // Optional. A missing Connection or webServer must not prevent the tools above from registering.
+  registerConfigChannel(ctx, (endpoint, payload, signal) => handleConfigRpc(endpoint, payload, {
+    settings,
+    subprocess: ctx.get?.('subprocess') ?? ctx.subprocess,
+    cwd: workspaceOrTemp(''),
+    signal,
+    resolveLauncher: () => resolveTrLauncher(settings.trCommand),
+  }))
 }

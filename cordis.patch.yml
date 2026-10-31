@@ -1,0 +1,4 @@
+# Host-only plugin. Uses DSH's existing subprocess service; no UI override.
+- insert:
+    - id: tr-bridge
+      name: dsh-tr-bridge

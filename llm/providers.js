@@ -64,7 +64,7 @@ export function registerTrCodexProvider(ctx, {
   name = 'TR Codex',
   requestTimeoutMs = 30_000,
   idleTimeoutMs = 300_000,
-  version = '0.3.1',
+  version = '0.4.0',
   reasoningFile,
   llm,
   subprocess,
@@ -151,7 +151,7 @@ export function registerTrGrokProvider(ctx, {
   requestTimeoutMs = 30_000,
   promptTimeoutMs = 10 * 60_000,
   idleTimeoutMs = 300_000,
-  version = '0.3.1',
+  version = '0.4.0',
   routeCatalog,
   reasoningFile,
   llm,
@@ -204,6 +204,15 @@ export function registerTrGrokProvider(ctx, {
     preferences: new ReasoningPreferences({
       file: reasoningFile === null ? undefined : (reasoningFile ?? defaultReasoningFile()),
     }),
+    tools: serviceOf(ctx, 'tools'),
+    agents: serviceOf(ctx, 'agents'),
+    approval: serviceOf(ctx, 'approval'),
+    subprocess: proc,
+    grokTools: settings?.grokTools !== false,
+    testCommand: settings?.grokTestCommand,
+    testCwd: settings?.grokTestCwd,
+    toolAuditFile: settings?.grokToolAuditFile,
+    logger: ctx?.logger,
   })
 
   let registration

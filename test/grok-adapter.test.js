@@ -13,9 +13,9 @@ class FakeServer {
   promptResult = { stopReason: 'end_turn', _meta: { modelId: 'grok-9.9', usage: { inputTokens: 4, outputTokens: 2 } } }
   setResult = undefined
   async start() {}
-  async newSession() {
+  async newSession(options = {}) {
     const id = `s${this.sessions.length + 1}`
-    this.sessions.push({ sessionId: id })
+    this.sessions.push({ sessionId: id, options })
     return { sessionId: id, models: { currentModelId: 'tokenrouter', availableModels: [] } }
   }
   async setConfigOption(sessionId, configId, value) {
@@ -60,6 +60,7 @@ function adapterFor(server, overrides = {}) {
     },
     cwd: 'C:\\work',
     idleTimeoutMs: 5_000,
+    grokTools: false,
     ...overrides,
   })
 }
@@ -98,6 +99,7 @@ test('Grok selected model reaches set_config_option and text streams with actual
     reasoningEffort: undefined,
     sessionId: 's1',
     stopReason: 'end_turn',
+    toolsEnabled: false,
   })
   assert.deepEqual(server.closed, ['s1'])
 })
@@ -153,15 +155,101 @@ test('Grok refuses a silent model substitution', async () => {
   assert.deepEqual(server.closed, ['s1'])
 })
 
-test('Grok reports a native tool call instead of pretending Harness ran it', async () => {
+test('Grok reports a denied non-MCP tool instead of pretending Harness ran it', async () => {
   const server = new FakeServer()
   const adapter = adapterFor(server)
-  server.events.push({ params: { update: { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'shell' } } })
+  server.deniedPermissionCount = () => 1
   await assert.rejects(
     collect(adapter.stream(options())),
     error => error.code === 'UNSUPPORTED_TOOL_CALL',
   )
   assert.deepEqual(server.closed, ['s1'])
+})
+
+test('Grok registers the Harness MCP bridge and allows its namespaced tool calls', async () => {
+  const server = new FakeServer()
+  const bridge = {
+    serverName: 'dsh_harness_test',
+    trustedPrefix: 'dsh_harness_test__',
+    toolNames: ['read', 'edit', 'run_tests'],
+    toolCount: 3,
+    mcpServers: [{ name: 'dsh_harness_test', command: 'node', args: ['bridge.js'], env: [] }],
+    started: false,
+    closed: false,
+    async start() { this.started = true },
+    async close() { this.closed = true },
+  }
+  const adapter = adapterFor(server, {
+    grokTools: true,
+    tools: { execute: async () => ({ content: [{ type: 'text', text: 'ok' }], isError: false }) },
+    agents: { get: id => id === 'session-1' ? { id } : undefined },
+    approval: { request: async () => 'allowed-once' },
+    subprocess: {},
+    toolBridgeFactory: input => {
+      assert.equal(input.sessionId, 'session-1')
+      assert.equal(input.agent.id, 'session-1')
+      return bridge
+    },
+  })
+  let promptText
+  server.prompt = (_session, text) => {
+    promptText = text
+    return Promise.resolve(server.promptResult)
+  }
+  server.events.push({
+    params: {
+      update: {
+        sessionUpdate: 'tool_call',
+        title: 'use_tool',
+        rawInput: { tool_name: 'dsh_harness_test__read', tool_input: { file_path: 'a' } },
+      },
+    },
+  })
+  server.events.push({
+    params: {
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call-1',
+        title: 'read',
+        status: 'completed',
+      },
+    },
+  })
+  const chunks = await collect(adapter.stream(options()))
+  assert.equal(bridge.started, true)
+  assert.equal(bridge.closed, true)
+  assert.equal(server.sessions[0].options.mcpServers.length, 1)
+  assert.equal(server.sessions[0].options.trustedToolPrefix, 'dsh_harness_test')
+  assert.match(promptText, /dsh_harness_test/)
+  assert.deepEqual(adapter.lastExecution.toolNames, ['read', 'edit', 'run_tests'])
+  assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' })
+})
+
+test('Grok still rejects a tool outside the authorized MCP namespace', async () => {
+  const server = new FakeServer()
+  const bridge = {
+    serverName: 'dsh_harness_test',
+    trustedPrefix: 'dsh_harness_test__',
+    toolNames: ['read'],
+    toolCount: 1,
+    mcpServers: [],
+    async start() {},
+    async close() { this.closed = true },
+  }
+  const adapter = adapterFor(server, {
+    grokTools: true,
+    tools: { execute: async () => ({ content: [{ type: 'text', text: 'ok' }], isError: false }) },
+    agents: { get: () => ({ id: 'session-1' }) },
+    approval: { request: async () => 'allowed-once' },
+    subprocess: {},
+    toolBridgeFactory: () => bridge,
+  })
+  server.deniedPermissionCount = () => 1
+  await assert.rejects(
+    collect(adapter.stream(options())),
+    error => error.code === 'UNSUPPORTED_TOOL_CALL',
+  )
+  assert.equal(bridge.closed, true)
 })
 
 test('Grok omits Harness tools from ACP and returns usage', async () => {

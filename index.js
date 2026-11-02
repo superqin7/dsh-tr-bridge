@@ -11,6 +11,8 @@
  * or forward an API key.
  *
  * 0.3.1 also registers optional native `tr-codex` and `tr-grok` LlmAdapters.
+ * 0.4.0 adds a Grok ACP MCP tool bridge with native Harness tools, one-shot
+ * approvals, a fixed test argv and an optional JSONL audit.
  * They are additive: if the llm service or launcher is unavailable, the two
  * tools above still register and behave exactly as before.
  */
@@ -34,6 +36,7 @@ import {
   workspaceOrTemp,
 } from './models.js'
 import { resolveTrLauncher } from './resolve-tr.js'
+import { normalizeTestCommand } from './llm/grok-tools.js'
 import { defaultLlmCwd, registerTrCodexProvider, registerTrGrokProvider } from './llm/providers.js'
 
 export const name = 'dsh-tr-bridge'
@@ -170,6 +173,16 @@ function readConfig(config = {}) {
       ? null
       : (typeof config.reasoningFile === 'string' && config.reasoningFile.trim()
           ? config.reasoningFile.trim()
+          : undefined),
+    grokTools: config.grokTools !== false,
+    grokTestCommand: normalizeTestCommand(config.grokTestCommand),
+    grokTestCwd: typeof config.grokTestCwd === 'string' && config.grokTestCwd.trim()
+      ? config.grokTestCwd.trim()
+      : undefined,
+    grokToolAuditFile: config.grokToolAuditFile === null
+      ? null
+      : (typeof config.grokToolAuditFile === 'string' && config.grokToolAuditFile.trim()
+          ? config.grokToolAuditFile.trim()
           : undefined),
   }
 }
@@ -400,7 +413,7 @@ export function apply(ctx, config = {}) {
     cwd: settings.llmCwd,
     catalogJson: settings.llmCatalogPath,
     reasoningFile: settings.reasoningFile,
-    version: '0.3.1',
+    version: '0.4.0',
   })
   if (native.ok === false && native.reason === 'llm-unavailable' && typeof ctx.inject === 'function') {
     ctx.inject(['llm'], child => {
@@ -409,13 +422,13 @@ export function apply(ctx, config = {}) {
         cwd: settings.llmCwd,
         catalogJson: settings.llmCatalogPath,
         reasoningFile: settings.reasoningFile,
-        version: '0.3.1',
+        version: '0.4.0',
       })
       registerTrGrokProvider(child, {
         settings,
         cwd: settings.llmCwd,
         reasoningFile: settings.reasoningFile,
-        version: '0.3.1',
+        version: '0.4.0',
       })
     })
   } else {
@@ -423,7 +436,7 @@ export function apply(ctx, config = {}) {
       settings,
       cwd: settings.llmCwd,
       reasoningFile: settings.reasoningFile,
-      version: '0.3.1',
+      version: '0.4.0',
     })
   }
 

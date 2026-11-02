@@ -10,6 +10,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { TrLlmError } from './errors.js'
+import { HarnessToolBridge } from './grok-tools.js'
 import { contentText, inputFor } from './transcript.js'
 import { resolveEffort } from './reasoning-preferences.js'
 
@@ -65,6 +66,16 @@ export class GrokAdapter {
     cwd,
     idleTimeoutMs = 300_000,
     preferences,
+    tools,
+    agents,
+    approval,
+    subprocess,
+    grokTools = true,
+    testCommand,
+    testCwd,
+    toolAuditFile,
+    toolBridgeFactory,
+    logger,
   } = {}) {
     this.provider = provider
     this.name = name
@@ -73,6 +84,16 @@ export class GrokAdapter {
     this.cwd = cwd
     this.idleTimeoutMs = idleTimeoutMs
     this.preferences = preferences
+    this.tools = tools
+    this.agents = agents
+    this.approval = approval
+    this.subprocess = subprocess
+    this.grokTools = grokTools !== false
+    this.testCommand = testCommand
+    this.testCwd = testCwd
+    this.toolAuditFile = toolAuditFile
+    this.toolBridgeFactory = toolBridgeFactory
+    this.logger = logger
     this.lastExecution = undefined
   }
 
@@ -97,6 +118,44 @@ export class GrokAdapter {
     if (!preferred) return
     this.lastModels.set(key, model)
     if (effort !== undefined) this.preferences?.record(this.provider, model, effort)
+  }
+
+  toolContext(options) {
+    if (!this.grokTools) return undefined
+    if (options.purpose !== undefined && options.purpose !== 'conversation') return undefined
+    if (!Array.isArray(options.tools) || options.tools.length === 0) return undefined
+    if (typeof options.sessionId !== 'string' || !options.sessionId) {
+      throw new TrLlmError('TR Grok tool calls require a Harness session.', 'TOOL_CONTEXT_UNAVAILABLE')
+    }
+    const agent = this.agents?.get?.(options.sessionId)
+    if (!agent) {
+      throw new TrLlmError('TR Grok tools require a live Harness Agent for this session.', 'TOOL_CONTEXT_UNAVAILABLE')
+    }
+    if (typeof this.tools?.execute !== 'function') {
+      throw new TrLlmError('TR Grok tools require the Harness tool registry.', 'TOOL_CONTEXT_UNAVAILABLE')
+    }
+    return agent
+  }
+
+  makeToolBridge(options, agent) {
+    const factory = this.toolBridgeFactory
+      ?? (input => new HarnessToolBridge(input))
+    return factory({
+      sessionId: options.sessionId,
+      cwd: this.cwd,
+      tools: options.tools,
+      agent,
+      executeTool: input => this.tools.execute(input),
+      requestApproval: this.approval?.request
+        ? input => this.approval.request(input)
+        : undefined,
+      subprocess: this.subprocess,
+      testCommand: this.testCommand,
+      testCwd: this.testCwd,
+      auditFile: this.toolAuditFile,
+      logger: this.logger,
+      signal: options.signal,
+    })
   }
 
   providerInfo(provider) {
@@ -152,12 +211,27 @@ export class GrokAdapter {
     }
     this.busy.add(key)
 
+    const toolAgent = this.toolContext(options)
     let session
+    let bridge
     let finished = false
     let aborted = false
     try {
+      if (toolAgent) {
+        bridge = this.makeToolBridge(options, toolAgent)
+        if (bridge && bridge.toolCount === 0) {
+          await bridge.close()
+          bridge = undefined
+        } else {
+          await bridge.start()
+        }
+      }
       await this.server.start(options.signal)
-      session = await this.server.newSession({ cwd: this.cwd }, options.signal)
+      session = await this.server.newSession({
+        cwd: this.cwd,
+        mcpServers: bridge?.mcpServers ?? [],
+        trustedToolPrefix: bridge?.serverName,
+      }, options.signal)
       const selected = await this.server.setConfigOption(session.sessionId, 'model', options.model, options.signal)
       const effective = optionValue(selected, 'model') ?? optionValue(session, 'model')
       if (effective && effective !== options.model) {
@@ -177,9 +251,17 @@ export class GrokAdapter {
         }
       }
 
+      const toolNotice = bridge
+        ? [
+            'You are the model inside DeepSeek Harness.',
+            `Harness tools are available through the MCP server "${bridge.serverName}" (${bridge.toolNames.join(', ')}).`,
+            'Use only those MCP tools for file reads, searches, edits, and the configured test command. Do not use Grok built-in shell or file tools; they are denied by this client.',
+            'Every edit and test run pauses for the Harness user’s one-shot approval. A denied or failed tool is an error result; never claim success when the tool result is an error.',
+          ].join(' ')
+        : 'You are the model inside DeepSeek Harness. This TR Grok provider supports text chat only. Harness tools are not available in this provider; do not claim to have run one. Answer in text.'
       const system = [
         typeof options.system === 'string' ? options.system : '',
-        'You are the model inside DeepSeek Harness. This TR Grok provider supports text chat only. Harness tools are not available in this provider; do not claim to have run one. Answer in text.',
+        toolNotice,
       ].filter(Boolean).join('\n\n')
       const text = [
         system,
@@ -203,7 +285,6 @@ export class GrokAdapter {
 
       const blocks = new Map()
       let nextIndex = 0
-      let sawToolCall = false
       const end = block => {
         blocks.delete(block.id)
         return {
@@ -229,9 +310,9 @@ export class GrokAdapter {
           yield { type: type === 'text' ? 'text-delta' : 'reasoning-delta', index: block.index, text: delta }
           return
         }
-        if (kind === 'tool_call' || kind === 'tool_call_update') {
-          sawToolCall = true
-        }
+        // Tool calls are authorized by Grok's permission request, which
+        // GrokAppServer grants only for this turn's MCP namespace. Do not
+        // reinterpret intermediate tool updates as native DSH tool calls.
       }
 
       while (true) {
@@ -262,9 +343,10 @@ export class GrokAdapter {
         if (event?.done) continue
         for (const chunk of handle(event)) yield chunk
       }
-      if (sawToolCall) {
+      if (typeof this.server.deniedPermissionCount === 'function'
+        && this.server.deniedPermissionCount(session.sessionId) > 0) {
         throw new TrLlmError(
-          'TR Grok attempted a native tool, but this provider exposes no Harness tool channel.',
+          'TR Grok requested a tool outside the authorized Harness MCP server; the call was denied.',
           'UNSUPPORTED_TOOL_CALL',
         )
       }
@@ -283,6 +365,8 @@ export class GrokAdapter {
         reasoningEffort: effort,
         sessionId: session.sessionId,
         stopReason: result.stopReason,
+        toolsEnabled: bridge !== undefined,
+        ...bridge === undefined ? {} : { toolNames: bridge.toolNames },
       }
       this.remember(key, options.model, effort, preferred)
       finished = true
@@ -302,6 +386,7 @@ export class GrokAdapter {
         if (aborted) this.server.cancel(session.sessionId)
         await this.server.closeSession(session.sessionId)
       }
+      await bridge?.close()
       this.busy.delete(key)
       void finished
     }

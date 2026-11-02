@@ -61,6 +61,55 @@ test('Grok argv uses tr.exe and the no-leader ACP stdio transport', () => {
   ])
 })
 
+test('Grok forwards the MCP server config and permits only its namespaced tools', async () => {
+  const { server, spawns } = launch()
+  const starting = server.start()
+  await waitFor(() => spawns[0]?.child.messages.length > 0)
+  const init = spawns[0].child.messages[0]
+  spawns[0].child.stdout.write(JSON.stringify({ id: init.id, result: { protocolVersion: 1 } }) + '\n')
+  await starting
+
+  const session = server.newSession({
+    cwd: 'C:\\work',
+    mcpServers: [{ name: 'dsh_harness_test', command: 'node', args: ['bridge.js'], env: [] }],
+    trustedToolPrefix: 'dsh_harness_test',
+  })
+  await waitFor(() => spawns[0].child.messages.some(message => message.method === 'session/new'))
+  const request = spawns[0].child.messages.find(message => message.method === 'session/new')
+  assert.deepEqual(request.params.mcpServers, [{ name: 'dsh_harness_test', command: 'node', args: ['bridge.js'], env: [] }])
+  spawns[0].child.stdout.write(JSON.stringify({ id: request.id, result: { sessionId: 's1' } }) + '\n')
+  await session
+
+  server.receive({
+    id: 101,
+    method: 'session/request_permission',
+    params: {
+      sessionId: 's1',
+      toolCall: { rawInput: { tool_name: 'dsh_harness_test__read' } },
+      options: [
+        { optionId: 'always-allow', kind: 'allow_always' },
+        { optionId: 'allow-once', kind: 'allow_once' },
+      ],
+    },
+  })
+  const allowed = spawns[0].child.messages.find(message => message.id === 101)
+  assert.deepEqual(allowed.result, { outcome: { outcome: 'selected', optionId: 'allow-once' } })
+
+  server.receive({
+    id: 102,
+    method: 'session/request_permission',
+    params: {
+      sessionId: 's1',
+      toolCall: { title: 'shell' },
+      options: [{ optionId: 'allow-once', kind: 'allow_once' }],
+    },
+  })
+  const denied = spawns[0].child.messages.find(message => message.id === 102)
+  assert.deepEqual(denied.result, { outcome: { outcome: 'cancelled' } })
+  assert.equal(server.deniedPermissionCount('s1'), 1)
+  server.close()
+})
+
 test('Grok initialize, session/new and session/update stay on JSONL stdio', async () => {
   const { server, spawns } = launch()
   const starting = server.start()

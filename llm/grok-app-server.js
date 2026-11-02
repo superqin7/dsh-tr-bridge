@@ -24,6 +24,8 @@ export class GrokAppServer {
   starting
   peer
   queues = new Map()
+  trustedPrefixes = new Map()
+  deniedPermissions = new Map()
   stderrBytes = 0
   actualModels = []
 
@@ -71,6 +73,8 @@ export class GrokAppServer {
     this.child = child
     this.generation += 1
     this.queues.clear()
+    this.trustedPrefixes.clear()
+    this.deniedPermissions.clear()
     this.stderrBytes = 0
 
     const lines = new LineBuffer(line => {
@@ -195,8 +199,31 @@ export class GrokAppServer {
 
   answerServerRequest(message) {
     if (message.method === 'session/request_permission') {
-      // This provider has no client-side tool executor. Answering "cancelled"
-      // is honest: the tool is not run and no permission is granted.
+      const params = message.params ?? {}
+      const prefix = typeof params.sessionId === 'string'
+        ? this.trustedPrefixes.get(params.sessionId)
+        : undefined
+      const toolName = params.toolCall?.rawInput?.tool_name ?? params.toolCall?.title
+      const trusted = typeof prefix === 'string'
+        && typeof toolName === 'string'
+        && toolName.startsWith(`${prefix}__`)
+      if (trusted) {
+        const options = Array.isArray(params.options) ? params.options : []
+        const once = options.find(option => option?.kind === 'allow_once' || option?.optionId === 'allow-once')
+        const optionId = once?.optionId ?? once?.id
+        if (typeof optionId === 'string' && optionId) {
+          this.send({
+            id: message.id,
+            result: { outcome: { outcome: 'selected', optionId } },
+          })
+          return
+        }
+      }
+      // No client-side executor is advertised. Denying an unknown tool is the
+      // honest answer: it did not run and no permission was granted.
+      if (typeof params.sessionId === 'string') {
+        this.deniedPermissions.set(params.sessionId, (this.deniedPermissions.get(params.sessionId) ?? 0) + 1)
+      }
       this.send({
         id: message.id,
         result: { outcome: { outcome: 'cancelled' } },
@@ -205,7 +232,7 @@ export class GrokAppServer {
     }
     this.send({
       id: message.id,
-      error: { code: -32601, message: 'This client supports text chat only.' },
+      error: { code: -32601, message: 'This client only implements the TR Grok MCP tool bridge.' },
     })
   }
 
@@ -222,6 +249,10 @@ export class GrokAppServer {
     this.queue(sessionId).push(event)
   }
 
+  deniedPermissionCount(sessionId) {
+    return this.deniedPermissions.get(sessionId) ?? 0
+  }
+
   drainEvents(sessionId) {
     const queue = this.queues.get(sessionId)
     if (!queue) return []
@@ -229,10 +260,13 @@ export class GrokAppServer {
     return values
   }
 
-  async newSession({ cwd = this.cwd } = {}, signal) {
-    const result = await this.request('session/new', { cwd, mcpServers: [] }, signal)
+  async newSession({ cwd = this.cwd, mcpServers = [], trustedToolPrefix } = {}, signal) {
+    const result = await this.request('session/new', { cwd, mcpServers: [...mcpServers] }, signal)
     if (!result || typeof result.sessionId !== 'string') {
       throw new TrLlmError('TR Grok returned no session ID.', 'PROTOCOL_ERROR')
+    }
+    if (typeof trustedToolPrefix === 'string' && trustedToolPrefix) {
+      this.trustedPrefixes.set(result.sessionId, trustedToolPrefix)
     }
     this.queue(result.sessionId)
     return result
@@ -267,6 +301,8 @@ export class GrokAppServer {
       // A discovery/failed session must not mask the primary error.
     } finally {
       this.queues.delete(sessionId)
+      this.trustedPrefixes.delete(sessionId)
+      this.deniedPermissions.delete(sessionId)
     }
   }
 
@@ -277,6 +313,8 @@ export class GrokAppServer {
     this.peer?.failAll(error)
     for (const queue of this.queues.values()) queue.fail(error)
     this.queues.clear()
+    this.trustedPrefixes.clear()
+    this.deniedPermissions.clear()
     try { child.terminate?.() } catch { /* already gone */ }
   }
 

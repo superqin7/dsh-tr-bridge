@@ -9,6 +9,10 @@
  * later cd changes, not only session.header.cwd.
  * Login stays in the existing TokenRouter config. This plugin does not read
  * or forward an API key.
+ *
+ * 0.2.0 also registers an optional native `tr-codex` LlmAdapter. It is
+ * additive: if the llm service or launcher is unavailable, the two tools
+ * above still register and behave exactly as before.
  */
 import {
   applySelectionChange,
@@ -30,6 +34,7 @@ import {
   workspaceOrTemp,
 } from './models.js'
 import { resolveTrLauncher } from './resolve-tr.js'
+import { defaultLlmCwd, registerTrCodexProvider } from './llm/providers.js'
 
 export const name = 'dsh-tr-bridge'
 export const inject = ['tools', 'subprocess', 'workingDirectory']
@@ -374,6 +379,23 @@ export function apply(ctx, config = {}) {
       }
     },
   })
+
+  // Native provider is additive: tools above are already registered, and a
+  // missing llm service or launcher must not disable the existing bridge.
+  const native = registerTrCodexProvider(ctx, {
+    settings,
+    cwd: defaultLlmCwd(),
+    version: '0.2.0',
+  })
+  if (native.ok === false && native.reason === 'llm-unavailable' && typeof ctx.inject === 'function') {
+    ctx.inject(['llm'], child => {
+      registerTrCodexProvider(child, {
+        settings,
+        cwd: defaultLlmCwd(),
+        version: '0.2.0',
+      })
+    })
+  }
 
   // Optional. A missing Connection or webServer must not prevent the tools above from registering.
   registerConfigChannel(ctx, (endpoint, payload, signal) => handleConfigRpc(endpoint, payload, {

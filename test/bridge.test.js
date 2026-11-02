@@ -182,7 +182,7 @@ test('Registers the DSH tool; dry-run does not launch a child', async () => {
       return undefined
     },
   }
-  apply(ctx, { trCommand: launcher })
+  apply(ctx, { trCommand: launcher, selectionFile: join(dir, 'missing-selection.json') })
   assert.equal(tool.name, 'tr_bridge')
   assert.equal(tool.parameters, toolParameters)
   assert.equal(typeof tool.output.render, 'function')
@@ -244,7 +244,7 @@ test('dry-run uses the session working directory after cd', async () => {
     workingDirectory: { ensure() { return 'D:\\session\\after-cd' } },
     get() { throw new Error('should use the injected workingDirectory service') },
   }
-  apply(ctx, { trCommand: launcher })
+  apply(ctx, { trCommand: launcher, selectionFile: join(dir, 'missing-selection.json') })
   const preview = await tool.execute({ agent: 'grok', task: 'look', dryRun: true }, {
     agent: { session: { header: { cwd: 'D:\\original' } } },
   })

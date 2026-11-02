@@ -1,7 +1,7 @@
 {
   "name": "dsh-tr-bridge",
-  "version": "0.1.0-rc.4",
-  "description": "Local TokenRouter CLI bridge for DeepSeek Harness. Uses the existing tr login and does not ask for an API key.",
+  "version": "0.2.0",
+  "description": "Native TR Codex model provider plus the existing TokenRouter CLI bridge for DeepSeek Harness. Uses the existing tr login and does not ask for an API key.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -17,10 +17,12 @@
     "resolve-tr.js",
     "models.js",
     "config-api.js",
+    "llm/*.js",
     "lib/client.js",
     "cordis.patch.yml",
     "README.md",
     "NOTICE.md",
+    "THIRD_PARTY_NOTICES.md",
     "SECURITY.md",
     "LICENSE",
     "locale/en.json",
@@ -29,7 +31,7 @@
     "compatibility.json"
   ],
   "icon": "./icon.svg",
-  "scripts": { "test": "node --test test/bridge.test.js test/resolve-tr.test.js test/models.test.js test/config-api.test.js test/client.test.js" },
+  "scripts": { "test": "node --test test/bridge.test.js test/resolve-tr.test.js test/models.test.js test/config-api.test.js test/client.test.js test/llm-rpc.test.js test/llm-catalog.test.js test/llm-adapter.test.js test/llm-transport.test.js test/llm-contract.test.js" },
   "license": "MIT",
   "repository": {
     "type": "git",

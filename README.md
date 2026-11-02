@@ -19,6 +19,7 @@
 - 不读取 TokenRouter/Codex 登录文件，不读取 API Key；只启动已经登录的 `tr.exe`，并把子进程 stderr 只计字节、不转发。
 - **能力边界：** 只接受文本和文本工具结果；图片/文件输入会被明确拒绝。`stop`、`temperature`、`maxTokens` 会被拒绝，而不是静默忽略。
 - **尚未验证：** 桌面版模型菜单渲染、真实模型回复、工具往返和取消后的进程清理。本分支没有安装进正在使用的 Harness Desktop。
+- **TR Grok：** 只准备了共用 JSONL RPC 与独立设计（[docs/grok-native-provider.md](./docs/grok-native-provider.md)），没有实现，也没有用文本约定冒充原生工具调用。
 
 ## 0.2.1-rc.5 接口检查
 

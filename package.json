@@ -18,6 +18,7 @@
     "models.js",
     "config-api.js",
     "llm/*.js",
+    "docs/*.md",
     "lib/client.js",
     "cordis.patch.yml",
     "README.md",

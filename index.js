@@ -10,7 +10,7 @@
  * Login stays in the existing TokenRouter config. This plugin does not read
  * or forward an API key.
  *
- * 0.3.0 also registers optional native `tr-codex` and `tr-grok` LlmAdapters.
+ * 0.3.1 also registers optional native `tr-codex` and `tr-grok` LlmAdapters.
  * They are additive: if the llm service or launcher is unavailable, the two
  * tools above still register and behave exactly as before.
  */
@@ -166,6 +166,11 @@ function readConfig(config = {}) {
     selectionFile: typeof config.selectionFile === 'string' && config.selectionFile.trim()
       ? config.selectionFile.trim()
       : null,
+    reasoningFile: config.reasoningFile === null
+      ? null
+      : (typeof config.reasoningFile === 'string' && config.reasoningFile.trim()
+          ? config.reasoningFile.trim()
+          : undefined),
   }
 }
 
@@ -394,7 +399,8 @@ export function apply(ctx, config = {}) {
     settings,
     cwd: settings.llmCwd,
     catalogJson: settings.llmCatalogPath,
-    version: '0.3.0',
+    reasoningFile: settings.reasoningFile,
+    version: '0.3.1',
   })
   if (native.ok === false && native.reason === 'llm-unavailable' && typeof ctx.inject === 'function') {
     ctx.inject(['llm'], child => {
@@ -402,19 +408,22 @@ export function apply(ctx, config = {}) {
         settings,
         cwd: settings.llmCwd,
         catalogJson: settings.llmCatalogPath,
-        version: '0.3.0',
+        reasoningFile: settings.reasoningFile,
+        version: '0.3.1',
       })
       registerTrGrokProvider(child, {
         settings,
         cwd: settings.llmCwd,
-        version: '0.3.0',
+        reasoningFile: settings.reasoningFile,
+        version: '0.3.1',
       })
     })
   } else {
     registerTrGrokProvider(ctx, {
       settings,
       cwd: settings.llmCwd,
-      version: '0.3.0',
+      reasoningFile: settings.reasoningFile,
+      version: '0.3.1',
     })
   }
 

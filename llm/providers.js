@@ -12,6 +12,8 @@ import { CodexAdapter } from './codex-adapter.js'
 import { GrokAppServer } from './grok-app-server.js'
 import { GrokCatalog } from './grok-catalog.js'
 import { GrokAdapter } from './grok-adapter.js'
+import { discoverGrokRouteIds } from './grok-routes.js'
+import { ReasoningPreferences, defaultReasoningFile } from './reasoning-preferences.js'
 import { resolveTrLauncher } from '../resolve-tr.js'
 
 export const TR_CODEX_PROVIDER = 'tr-codex'
@@ -62,7 +64,8 @@ export function registerTrCodexProvider(ctx, {
   name = 'TR Codex',
   requestTimeoutMs = 30_000,
   idleTimeoutMs = 300_000,
-  version = '0.3.0',
+  version = '0.3.1',
+  reasoningFile,
   llm,
   subprocess,
 } = {}) {
@@ -100,6 +103,9 @@ export function registerTrCodexProvider(ctx, {
     catalog,
     cwd: resolvedCwd,
     idleTimeoutMs,
+    preferences: new ReasoningPreferences({
+      file: reasoningFile === null ? undefined : (reasoningFile ?? defaultReasoningFile()),
+    }),
   })
 
   let registration
@@ -145,7 +151,9 @@ export function registerTrGrokProvider(ctx, {
   requestTimeoutMs = 30_000,
   promptTimeoutMs = 10 * 60_000,
   idleTimeoutMs = 300_000,
-  version = '0.3.0',
+  version = '0.3.1',
+  routeCatalog,
+  reasoningFile,
   llm,
   subprocess,
 } = {}) {
@@ -174,10 +182,17 @@ export function registerTrGrokProvider(ctx, {
     promptTimeoutMs,
     clientVersion: version,
   })
+  const resolveRoutes = routeCatalog ?? ((signal) => discoverGrokRouteIds({
+    launcher: command,
+    subprocess: proc,
+    cwd: resolvedCwd,
+    signal,
+  }))
   const catalog = new GrokCatalog(server, {
     provider: providerId,
     cwd: resolvedCwd,
     ttlMs: 15_000,
+    routeCatalog: resolveRoutes,
   })
   const adapter = new GrokAdapter({
     provider: providerId,
@@ -186,6 +201,9 @@ export function registerTrGrokProvider(ctx, {
     catalog,
     cwd: resolvedCwd,
     idleTimeoutMs,
+    preferences: new ReasoningPreferences({
+      file: reasoningFile === null ? undefined : (reasoningFile ?? defaultReasoningFile()),
+    }),
   })
 
   let registration

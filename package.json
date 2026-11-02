@@ -1,6 +1,6 @@
 {
   "name": "dsh-tr-bridge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Native TR Codex and TR Grok model providers plus the existing TokenRouter CLI bridge for DeepSeek Harness. Uses the existing tr login and does not ask for an API key.",
   "type": "module",
   "main": "index.js",
@@ -32,7 +32,7 @@
     "compatibility.json"
   ],
   "icon": "./icon.svg",
-  "scripts": { "test": "node --test test/bridge.test.js test/resolve-tr.test.js test/models.test.js test/config-api.test.js test/client.test.js test/llm-rpc.test.js test/llm-catalog.test.js test/llm-adapter.test.js test/llm-transport.test.js test/llm-contract.test.js test/grok-catalog.test.js test/grok-adapter.test.js test/grok-transport.test.js" },
+  "scripts": { "test": "node --test test/bridge.test.js test/resolve-tr.test.js test/models.test.js test/config-api.test.js test/client.test.js test/llm-rpc.test.js test/llm-catalog.test.js test/llm-adapter.test.js test/llm-transport.test.js test/llm-contract.test.js test/grok-catalog.test.js test/grok-adapter.test.js test/grok-transport.test.js test/reasoning-preferences.test.js" },
   "license": "MIT",
   "repository": {
     "type": "git",

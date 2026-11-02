@@ -20,7 +20,12 @@ class FakeServer {
   }
   async setConfigOption(sessionId, configId, value) {
     this.sets.push({ sessionId, configId, value })
-    return this.setResult ?? { configOptions: [{ id: 'model', currentValue: value }] }
+    return this.setResult ?? {
+      configOptions: [
+        { id: 'model', currentValue: configId === 'model' ? value : 'tokenrouter-grok-9.9' },
+        { id: 'reasoning_effort', currentValue: value },
+      ],
+    }
   }
   prompt() { return Promise.resolve(this.promptResult) }
   nextEvent(_id, signal) { return this.events.take(signal) }
@@ -38,7 +43,21 @@ function adapterFor(server, overrides = {}) {
     provider: 'tr-grok',
     name: 'TR Grok',
     server,
-    catalog: { async list() { return [] } },
+    catalog: {
+      async resolve(provider, id) {
+        return {
+          provider,
+          id,
+          name: id,
+          inputModalities: ['text'],
+          reasoning: { efforts: [{ id: 'high', name: 'High' }, { id: 'low', name: 'Low' }], defaultEffort: 'high' },
+        }
+      },
+      async list(...args) {
+        assert.deepEqual(args, [], 'listModels must not pass the provider as an AbortSignal')
+        return [await this.resolve('tr-grok', 'tokenrouter-grok-9.9')]
+      },
+    },
     cwd: 'C:\\work',
     idleTimeoutMs: 5_000,
     ...overrides,
@@ -76,10 +95,51 @@ test('Grok selected model reaches set_config_option and text streams with actual
   assert.deepEqual(adapter.lastExecution, {
     requested: 'tokenrouter-grok-9.9',
     actual: 'grok-9.9',
+    reasoningEffort: undefined,
     sessionId: 's1',
     stopReason: 'end_turn',
   })
   assert.deepEqual(server.closed, ['s1'])
+})
+
+test('Grok surfaces a saved effort as the model resolver default after restart', async () => {
+  const server = new FakeServer()
+  const adapter = adapterFor(server, {
+    preferences: {
+      get() { return 'low' },
+      record() {},
+    },
+  })
+  const info = await adapter.resolveModel('tr-grok', 'tokenrouter-grok-9.9')
+  assert.equal(info.reasoning.defaultEffort, 'low')
+  assert.equal((await adapter.listModels('tr-grok'))[0].reasoning.defaultEffort, 'low')
+})
+
+test('Grok sends a selected effort through set_config_option and records the confirmed value', async () => {
+  const server = new FakeServer()
+  const adapter = adapterFor(server)
+  const chunks = await collect(adapter.stream(options({ reasoningEffort: 'high' })))
+  assert.deepEqual(server.sets[1], { sessionId: 's1', configId: 'reasoning_effort', value: 'high' })
+  assert.equal(adapter.lastExecution.reasoningEffort, 'high')
+  assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' })
+})
+
+test('Grok fails loudly for an unadvertised effort and for an unconfirmed CLI value', async () => {
+  const unsupportedServer = new FakeServer()
+  const unsupported = adapterFor(unsupportedServer)
+  await assert.rejects(
+    collect(unsupported.stream(options({ reasoningEffort: 'ultra' }))),
+    error => error.code === 'UNSUPPORTED_OPTION' && /available: high, low/.test(error.message),
+  )
+  assert.deepEqual(unsupportedServer.sessions, [])
+
+  const unconfirmedServer = new FakeServer()
+  unconfirmedServer.setResult = { configOptions: [{ id: 'model', currentValue: 'tokenrouter-grok-9.9' }] }
+  const unconfirmed = adapterFor(unconfirmedServer)
+  await assert.rejects(
+    collect(unconfirmed.stream(options({ reasoningEffort: 'high' }))),
+    error => error.code === 'UNSUPPORTED_OPTION' && /did not confirm/.test(error.message),
+  )
 })
 
 test('Grok refuses a silent model substitution', async () => {

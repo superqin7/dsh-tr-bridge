@@ -68,7 +68,7 @@ export class CodexAppServer {
     env,
     catalogJson,
     requestTimeoutMs = 30_000,
-    clientVersion = '0.3.0',
+    clientVersion = '0.3.1',
   } = {}) {
     if (typeof spawn !== 'function') throw new TrLlmError('DSH subprocess service is unavailable.', 'SUBPROCESS_UNAVAILABLE')
     this.spawn = spawn

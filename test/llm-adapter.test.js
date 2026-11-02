@@ -29,7 +29,7 @@ async function collect(iterable) {
   return chunks
 }
 
-function adapterFor(server) {
+function adapterFor(server, overrides = {}) {
   const catalog = new CodexCatalog(server, { provider: 'tr-codex', ttlMs: 60_000 })
   return new CodexAdapter({
     provider: 'tr-codex',
@@ -37,8 +37,23 @@ function adapterFor(server) {
     server,
     catalog,
     cwd: 'C:\\work',
+    ...overrides,
   })
 }
+
+function completeTurn(server) {
+  server.events.push({
+    method: 'turn/completed',
+    params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+  })
+}
+
+const effortModels = [{
+  slug: 'gpt-effort',
+  displayName: 'Effort',
+  supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }],
+  defaultReasoningEffort: 'high',
+}]
 
 function baseOptions(overrides = {}) {
   return {
@@ -145,6 +160,35 @@ test('a dynamic tool call ends with tool-calls, then the result continues the sa
   assert.equal(second.some(chunk => chunk.type === 'text-delta' && chunk.text === 'Done'), true)
 })
 
+test('a tool-call finish still remembers the effort that reached turn/start', async () => {
+  const server = new FakeServer(effortModels)
+  const records = []
+  const adapter = adapterFor(server, {
+    preferences: {
+      get() {},
+      record(provider, model, effort) { records.push({ provider, model, effort }) },
+    },
+  })
+  server.events.push({
+    method: 'item/tool/call',
+    params: {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      callId: 'call-1',
+      tool: 'read_file',
+      arguments: { path: 'a.txt' },
+    },
+    requestId: 78,
+  })
+  const chunks = await collect(adapter.stream(baseOptions({
+    model: 'gpt-effort',
+    reasoningEffort: 'low',
+    tools: [{ name: 'read_file', description: 'read', parameters: { type: 'object', properties: { path: { type: 'string' } } } }],
+  })))
+  assert.deepEqual(chunks.at(-1).reason, { kind: 'tool-calls' })
+  assert.deepEqual(records, [{ provider: 'tr-codex', model: 'gpt-effort', effort: 'low' }])
+})
+
 test('cancelling a running turn aborts and releases the thread', async () => {
   const server = new FakeServer()
   const adapter = adapterFor(server)
@@ -160,6 +204,52 @@ test('cancelling a running turn aborts and releases the thread', async () => {
   await assert.rejects(iterator.next(), /user cancelled/)
   assert.equal(server.releases.length, 1)
   assert.equal(server.releases[0].threadId, 'thread-1')
+})
+
+test('a non-default reasoning effort reaches turn/start; unsupported levels fail before a thread', async () => {
+  const server = new FakeServer(effortModels)
+  const adapter = adapterFor(server)
+  completeTurn(server)
+  await collect(adapter.stream(baseOptions({ model: 'gpt-effort', reasoningEffort: 'low' })))
+  assert.equal(server.turns[0].params.effort, 'low')
+
+  const rejected = new FakeServer(effortModels)
+  const rejectedAdapter = adapterFor(rejected)
+  await assert.rejects(
+    collect(rejectedAdapter.stream(baseOptions({ model: 'gpt-effort', reasoningEffort: 'ultra' }))),
+    error => error.code === 'UNSUPPORTED_OPTION' && /available: low, high/.test(error.message),
+  )
+  assert.equal(rejected.threads.length, 0)
+})
+
+test('a saved preference becomes the resolved default so a restart restores it', async () => {
+  const server = new FakeServer(effortModels)
+  const adapter = adapterFor(server, {
+    preferences: {
+      get() { return 'low' },
+      record() {},
+    },
+  })
+  const info = await adapter.resolveModel('tr-codex', 'gpt-effort')
+  assert.equal(info.reasoning.defaultEffort, 'low')
+  const models = await adapter.listModels('tr-codex')
+  assert.equal(models[0].reasoning.defaultEffort, 'low')
+})
+
+test('a saved per-model effort replaces the picker default on a model switch', async () => {
+  const server = new FakeServer(effortModels)
+  const recorded = []
+  const adapter = adapterFor(server, {
+    preferences: {
+      get() { return 'low' },
+      record(provider, model, effort) { recorded.push({ provider, model, effort }) },
+    },
+  })
+  completeTurn(server)
+  const chunks = await collect(adapter.stream(baseOptions({ model: 'gpt-effort', reasoningEffort: 'low' })))
+  assert.equal(server.turns[0].params.effort, 'low')
+  assert.deepEqual(recorded, [{ provider: 'tr-codex', model: 'gpt-effort', effort: 'low' }])
+  assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' })
 })
 
 test('unsupported request overrides fail before starting a thread', async () => {

@@ -26,7 +26,11 @@ test('catalog comes only from live model/list and hides hidden entries', async (
   assert.deepEqual(models.map(model => model.id), ['gpt-5.6-sol', 'gpt-5.6-terra'])
   assert.equal(models[0].provider, 'tr-codex')
   assert.deepEqual(models[0].inputModalities, ['text'])
-  assert.equal(models[0].defaultEffort, 'high')
+  assert.deepEqual(models[0].reasoning, {
+    efforts: [{ id: 'high', name: 'high' }],
+    defaultEffort: 'high',
+  })
+  assert.equal(models[0].defaultEffort, undefined)
   assert.equal(server.calls, 1)
 })
 

@@ -14,24 +14,35 @@ function reasoningOf(model) {
     ?? model.supportedReasoningLevels
     ?? []
   const efforts = []
+  const seen = new Set()
   for (const level of levels) {
     if (typeof level === 'string') {
+      if (seen.has(level)) continue
+      seen.add(level)
       efforts.push({ id: level, name: level })
       continue
     }
     const id = level?.reasoningEffort ?? level?.effort ?? level?.id
-    if (typeof id !== 'string' || !id) continue
+    if (typeof id !== 'string' || !id || seen.has(id)) continue
+    seen.add(id)
     efforts.push({
       id,
-      name: level?.name ?? id,
-      ...(typeof level?.description === 'string' ? { description: level.description } : {}),
+      name: typeof level?.name === 'string' && level.name.trim() ? level.name.trim() : id,
+      ...(typeof level?.description === 'string' && level.description.trim() ? { description: level.description.trim() } : {}),
     })
   }
-  const defaultEffort = model.defaultReasoningEffort ?? model.default_reasoning_level ?? model.defaultReasoningLevel
-  return {
-    ...(efforts.length ? { efforts } : {}),
-    ...(typeof defaultEffort === 'string' ? { defaultEffort } : {}),
-  }
+  const advertisedDefault = model.defaultReasoningEffort ?? model.default_reasoning_level ?? model.defaultReasoningLevel
+  const defaultEffort = typeof advertisedDefault === 'string' && seen.has(advertisedDefault)
+    ? advertisedDefault
+    : undefined
+  // DSH reads the nested `reasoning` field on LlmModelInfo; top-level effort
+  // fields alone do not populate its reasoning chooser.
+  return efforts.length
+    ? {
+        efforts,
+        ...(defaultEffort !== undefined ? { defaultEffort } : {}),
+      }
+    : undefined
 }
 
 export function modelInfo(provider, model) {
@@ -41,6 +52,7 @@ export function modelInfo(provider, model) {
   if (hidden) return undefined
   const name = model.displayName ?? model.display_name ?? id
   const reportedId = model?.id ?? model?.slug
+  const reasoning = reasoningOf(model)
   return {
     provider,
     id,
@@ -51,7 +63,7 @@ export function modelInfo(provider, model) {
     ...(typeof reportedId === 'string' && reportedId && reportedId !== id ? { routingAlias: reportedId } : {}),
     ...(model.isDefault === true ? { isDefault: true } : {}),
     inputModalities: ['text'],
-    ...reasoningOf(model),
+    ...(reasoning === undefined ? {} : { reasoning }),
   }
 }
 

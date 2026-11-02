@@ -92,6 +92,22 @@ test('both providers resolve one cwd and Codex one catalog for discovery and exe
   grok.dispose()
 })
 
+test('reasoningFile config reaches both adapters and null disables persistence', () => {
+  const { ctx, adapters } = fakeContext()
+  apply(ctx, { trCommand: process.execPath, reasoningFile: null })
+  assert.equal(adapters.get('tr-codex').preferences.file, undefined)
+  assert.equal(adapters.get('tr-grok').preferences.file, undefined)
+})
+
+test('a custom reasoningFile path is used by both adapters', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tr-effort-'))
+  const file = join(dir, 'effort.json')
+  const { ctx, adapters } = fakeContext()
+  apply(ctx, { trCommand: process.execPath, reasoningFile: file })
+  assert.equal(adapters.get('tr-codex').preferences.file, file)
+  assert.equal(adapters.get('tr-grok').preferences.file, file)
+})
+
 test('a missing llm service leaves both existing tools registered', () => {
   const { ctx, tools, adapters } = fakeContext({ llm: false })
   assert.doesNotThrow(() => apply(ctx, { trCommand: process.execPath }))

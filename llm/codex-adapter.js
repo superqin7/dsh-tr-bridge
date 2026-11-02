@@ -15,6 +15,7 @@ import {
   inputFor,
   toolSpecs,
 } from './transcript.js'
+import { resolveEffort } from './reasoning-preferences.js'
 
 function usageDelta(total, previous = {}) {
   const diff = name => Math.max(0, (total?.[name] ?? 0) - (previous?.[name] ?? 0))
@@ -59,6 +60,7 @@ function toolResultsFrom(messages) {
 export class CodexAdapter {
   sessions = new Map()
   busy = new Set()
+  lastModels = new Map()
 
   constructor({
     provider = 'tr-codex',
@@ -68,6 +70,7 @@ export class CodexAdapter {
     cwd,
     idleTimeoutMs = 300_000,
     maxSessions = 128,
+    preferences,
   } = {}) {
     this.provider = provider
     this.name = name
@@ -76,6 +79,30 @@ export class CodexAdapter {
     this.cwd = cwd
     this.idleTimeoutMs = idleTimeoutMs
     this.maxSessions = maxSessions
+    this.preferences = preferences
+  }
+
+  effortFor(options, info, key) {
+    const preferred = (options.purpose === undefined || options.purpose === 'conversation')
+      && options.sessionId !== undefined
+    const previous = preferred ? this.lastModels.get(key) : undefined
+    const modelChanged = preferred && (!this.lastModels.has(key) || previous !== options.model)
+    const stored = preferred ? this.preferences?.get(this.provider, options.model) : undefined
+    return {
+      effort: resolveEffort({
+        info,
+        requested: options.reasoningEffort,
+        stored,
+        modelChanged,
+      }),
+      preferred,
+    }
+  }
+
+  remember(key, model, effort, preferred) {
+    if (!preferred) return
+    this.lastModels.set(key, model)
+    if (effort !== undefined) this.preferences?.record(this.provider, model, effort)
   }
 
   providerInfo(provider) {
@@ -85,14 +112,28 @@ export class CodexAdapter {
   // Defaults (normal retry policy) are correct for a local CLI process.
   providerRetryPolicy() {}
 
-  listModels(_provider) {
-    // The host may call this with or without the route argument; this adapter
-    // only owns one provider, so both forms return the same live catalog.
-    return this.catalog.list()
+  /** Surface the saved per-model choice as the picker default after a restart. */
+  preferredDefault(provider, info) {
+    const owner = typeof provider === 'string' && provider ? provider : this.provider
+    const saved = this.preferences?.get(owner, info.id)
+    if (saved === undefined) return info
+    const efforts = info.reasoning?.efforts
+    if (!Array.isArray(efforts) || !efforts.some(level => level?.id === saved)) return info
+    if (info.reasoning.defaultEffort === saved) return info
+    return { ...info, reasoning: { ...info.reasoning, defaultEffort: saved } }
   }
 
-  resolveModel(provider, model, signal) {
-    return this.catalog.resolve(provider, model, signal)
+  async listModels(provider) {
+    // The host may call this with or without the route argument; this adapter
+    // only owns one provider, so both forms return the same live catalog.
+    const owner = typeof provider === 'string' && provider ? provider : this.provider
+    const models = await this.catalog.list()
+    return models.map(model => this.preferredDefault(owner, model))
+  }
+
+  async resolveModel(provider, model, signal) {
+    const info = await this.catalog.resolve(provider, model, signal)
+    return this.preferredDefault(provider, info)
   }
 
   async prepareCall(provider, model, signal) {
@@ -169,14 +210,16 @@ export class CodexAdapter {
     for (const message of options.messages) contentText(message.content)
 
     const specs = toolSpecs(options.tools)
+    const key = keyOf(options)
+    const info = await this.resolveModel(options.provider ?? this.provider, options.model, options.signal)
+    const { effort, preferred } = this.effortFor(options, info, key)
     const signature = hashJson({
       system: options.system,
       specs,
       model: options.model,
-      effort: options.reasoningEffort,
+      effort,
       cwd: this.cwd,
     })
-    const key = keyOf(options)
     if (this.busy.has(key)) {
       throw new TrLlmError('A TR Codex response is already running for this Harness session.', 'TR_LLM_BUSY')
     }
@@ -212,7 +255,7 @@ export class CodexAdapter {
         }
         session.turnId = await this.server.startTurn(session.threadId, {
           model: options.model,
-          ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
+          ...(effort !== undefined ? { effort } : {}),
           input: [{ type: 'text', text: inputFor(incoming, !reuse) }],
         }, options.signal)
         session.closedItems = new Set()
@@ -326,6 +369,9 @@ export class CodexAdapter {
             yield { type: 'usage', usage: usageDelta(session.usage, session.billed) }
             session.billed = session.usage
           }
+          // The effort already reached `turn/start`; remember it even though
+          // this turn ends with a Harness tool call instead of completion.
+          this.remember(key, options.model, effort, preferred)
           yield finish('tool-calls')
           return
         }
@@ -343,6 +389,7 @@ export class CodexAdapter {
             session.billed = session.usage
           }
           session.turnId = undefined
+          this.remember(key, options.model, effort, preferred)
           yield finish('stop')
           return
         }

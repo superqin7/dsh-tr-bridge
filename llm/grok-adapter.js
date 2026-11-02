@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto'
 import { TrLlmError } from './errors.js'
 import { contentText, inputFor } from './transcript.js'
+import { resolveEffort } from './reasoning-preferences.js'
 
 function usageOf(result) {
   const usage = result?._meta?.usage ?? result?.usage
@@ -54,6 +55,7 @@ function optionValue(result, id) {
 
 export class GrokAdapter {
   busy = new Set()
+  lastModels = new Map()
 
   constructor({
     provider = 'tr-grok',
@@ -62,6 +64,7 @@ export class GrokAdapter {
     catalog,
     cwd,
     idleTimeoutMs = 300_000,
+    preferences,
   } = {}) {
     this.provider = provider
     this.name = name
@@ -69,7 +72,31 @@ export class GrokAdapter {
     this.catalog = catalog
     this.cwd = cwd
     this.idleTimeoutMs = idleTimeoutMs
+    this.preferences = preferences
     this.lastExecution = undefined
+  }
+
+  effortFor(options, info, key) {
+    const preferred = (options.purpose === undefined || options.purpose === 'conversation')
+      && options.sessionId !== undefined
+    const previous = preferred ? this.lastModels.get(key) : undefined
+    const modelChanged = preferred && (!this.lastModels.has(key) || previous !== options.model)
+    const stored = preferred ? this.preferences?.get(this.provider, options.model) : undefined
+    return {
+      effort: resolveEffort({
+        info,
+        requested: options.reasoningEffort,
+        stored,
+        modelChanged,
+      }),
+      preferred,
+    }
+  }
+
+  remember(key, model, effort, preferred) {
+    if (!preferred) return
+    this.lastModels.set(key, model)
+    if (effort !== undefined) this.preferences?.record(this.provider, model, effort)
   }
 
   providerInfo(provider) {
@@ -78,12 +105,26 @@ export class GrokAdapter {
 
   providerRetryPolicy() {}
 
-  listModels(_provider) {
-    return this.catalog.list()
+  /** Surface the saved per-model choice as the picker default after a restart. */
+  preferredDefault(provider, info) {
+    const owner = typeof provider === 'string' && provider ? provider : this.provider
+    const saved = this.preferences?.get(owner, info.id)
+    if (saved === undefined) return info
+    const efforts = info.reasoning?.efforts
+    if (!Array.isArray(efforts) || !efforts.some(level => level?.id === saved)) return info
+    if (info.reasoning.defaultEffort === saved) return info
+    return { ...info, reasoning: { ...info.reasoning, defaultEffort: saved } }
   }
 
-  resolveModel(provider, model, signal) {
-    return this.catalog.resolve(provider, model, signal)
+  async listModels(provider) {
+    const owner = typeof provider === 'string' && provider ? provider : this.provider
+    const models = await this.catalog.list()
+    return models.map(model => this.preferredDefault(owner, model))
+  }
+
+  async resolveModel(provider, model, signal) {
+    const info = await this.catalog.resolve(provider, model, signal)
+    return this.preferredDefault(provider, info)
   }
 
   async prepareCall(provider, model, signal) {
@@ -104,6 +145,8 @@ export class GrokAdapter {
     for (const message of options.messages) contentText(message.content)
 
     const key = options.sessionId ? `${options.sessionId}:${options.purpose ?? 'conversation'}` : randomUUID()
+    const info = await this.resolveModel(options.provider ?? this.provider, options.model, options.signal)
+    const { effort, preferred } = this.effortFor(options, info, key)
     if (this.busy.has(key)) {
       throw new TrLlmError('A TR Grok response is already running for this Harness session.', 'TR_LLM_BUSY')
     }
@@ -123,8 +166,15 @@ export class GrokAdapter {
           'MODEL_UNAVAILABLE',
         )
       }
-      if (options.reasoningEffort) {
-        await this.server.setConfigOption(session.sessionId, 'reasoning_effort', options.reasoningEffort, options.signal)
+      if (effort !== undefined) {
+        const configured = await this.server.setConfigOption(session.sessionId, 'reasoning_effort', effort, options.signal)
+        const applied = optionValue(configured, 'reasoning_effort')
+        if (applied !== effort) {
+          throw new TrLlmError(
+            `TR Grok did not confirm reasoning effort "${effort}" (CLI reported "${applied ?? 'none'}").`,
+            'UNSUPPORTED_OPTION',
+          )
+        }
       }
 
       const system = [
@@ -230,9 +280,11 @@ export class GrokAdapter {
       this.lastExecution = {
         requested: options.model,
         actual: typeof actual === 'string' ? actual : undefined,
+        reasoningEffort: effort,
         sessionId: session.sessionId,
         stopReason: result.stopReason,
       }
+      this.remember(key, options.model, effort, preferred)
       finished = true
       yield {
         type: 'finish',

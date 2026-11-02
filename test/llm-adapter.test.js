@@ -175,3 +175,12 @@ test('providerInfo keeps the exact provider id', () => {
   const adapter = adapterFor(server)
   assert.deepEqual(adapter.providerInfo('tr-codex'), { id: 'tr-codex', name: 'TR Codex' })
 })
+
+test('listModels serves the live catalog with or without the route argument', async () => {
+  const server = new FakeServer()
+  const adapter = adapterFor(server)
+  const withRoute = await adapter.listModels('tr-codex')
+  const withoutRoute = await adapter.listModels()
+  assert.deepEqual(withRoute.map(model => model.id), ['gpt-5.6-terra'])
+  assert.deepEqual(withoutRoute.map(model => model.id), ['gpt-5.6-terra'])
+})

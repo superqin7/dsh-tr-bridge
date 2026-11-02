@@ -60,8 +60,9 @@ export class CodexAdapter {
   // Defaults (normal retry policy) are correct for a local CLI process.
   providerRetryPolicy() {}
 
-  listModels(provider) {
-    if (provider !== this.provider) return []
+  listModels(_provider) {
+    // The host may call this with or without the route argument; this adapter
+    // only owns one provider, so both forms return the same live catalog.
     return this.catalog.list()
   }
 

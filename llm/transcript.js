@@ -21,7 +21,7 @@ export function contentText(blocks) {
     if (block?.type === 'tool-result') {
       return `[${block.isError ? 'Failed tool result' : 'Tool result'} ${block.toolCallId}]\n${contentText(block.content)}`
     }
-    throw new TrLlmError(`TR Codex accepts text and text tool results only; unsupported content: ${block?.type}.`, 'UNSUPPORTED_CONTENT')
+    throw new TrLlmError(`This provider accepts text and text tool results only; unsupported content: ${block?.type}.`, 'UNSUPPORTED_CONTENT')
   }).filter(Boolean).join('\n')
 }
 

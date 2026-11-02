@@ -1,6 +1,6 @@
 # Third-party notices / 第三方代码声明
 
-`dsh-tr-bridge` 0.2.0 的 Codex app-server 传输与事件映射，参考并改编自 **dsh-connect**（作者 Canary Builds，MIT License）的 `src/transport.js`、`src/adapter.js` 及安全启动参数思路。改编部分位于本仓库的 `llm/codex-app-server.js`、`llm/codex-adapter.js`；它们已按 `tr.exe` 启动方式、TokenRouter 登录和 Harness 0.2.1-rc.5 的 `StreamChunk` 契约重写。
+`dsh-tr-bridge` 0.3.0 的 Codex app-server 传输与事件映射，参考并改编自 **dsh-connect**（作者 Canary Builds，MIT License）的 `src/transport.js`、`src/adapter.js` 及安全启动参数思路。改编部分位于本仓库的 `llm/codex-app-server.js`、`llm/codex-adapter.js`；它们已按 `tr.exe` 启动方式、TokenRouter 登录和 Harness 0.2.1-rc.5 的 `StreamChunk` 契约重写。Grok ACP 传输、目录和适配器为独立实现。
 
 The Codex app-server transport and event mapping in this repository adapt ideas and code structure from **dsh-connect** by Canary Builds, licensed under MIT.
 

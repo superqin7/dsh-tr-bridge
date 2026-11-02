@@ -24,6 +24,22 @@ test('RpcPeer resolves responses by id and rejects protocol errors', async () =>
   const failed = peer.request('thread/start', {})
   peer.receive({ id: sent[1].id, error: { message: 'no' } })
   await assert.rejects(failed, error => error.code === 'TR_LLM_RPC_ERROR')
+
+  const detailed = peer.request('session/prompt', {})
+  peer.receive({
+    id: sent[2].id,
+    error: {
+      message: 'Internal error',
+      data: 'Unauthorized (401) from upstream: invalid or expired credentials (Bearer sk-test-secret-12345678)',
+    },
+  })
+  await assert.rejects(detailed, error => (
+    error.code === 'TR_LLM_RPC_ERROR'
+    && error.message.includes('Unauthorized (401)')
+    && error.message.includes('invalid or expired credentials')
+    && !error.message.includes('sk-test-secret-12345678')
+    && error.message.includes('[REDACTED]')
+  ))
 })
 
 test('RpcPeer times out and aborts without leaking pending entries', async () => {

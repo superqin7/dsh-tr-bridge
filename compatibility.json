@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
   "checkedHost": "0.2.1-rc.5",
-  "checkScope": "Installed desktop package contracts for tools.register, subprocess.spawn, Windows CreateProcessW, workingDirectory.ensure, and llm.registerAdapter. Model discovery uses tr codex debug models, tr grok models, and Codex app-server model/list. Not a live plugin-load, model-menu, model-reply, or in-app tool-call test.",
-  "windowsPluginLoad": "未验证",
-  "windowsInAppToolCall": "未验证",
-  "dynamicConfigDropdown": "已实现。0.2.1-rc.5 的 plugins.row.config 不渲染可见文字为「配置」的按钮，只把组件标题变成无障碍名称为「配置 {name}」的箭头。因此同时注册 plugins.detail.actions（可见按钮「配置」）和 plugins.bundle.config（键 dsh-tr-bridge，表单直接出现在插件详情）。行配置键仍是 dsh-tr-bridge#tr-bridge。入口是随包提供的 lib/client.js。下拉项来自宿主 Connection RPC 的当次 CLI 查询，不是 schema enum。桌面版点击、刷新、保存和重启后保留仍是未验证。",
-  "nativeCodexProvider": "已实现 tr-codex：按 0.2.1-rc.5 的 LlmAdapter 契约注册，模型只来自 tr codex app-server 的 model/list，选中 ID 原样传给 thread/start 与 turn/start，支持复用 thread、流式 text/reasoning/usage、dynamicTools、取消和超时。2026-11-02 用本插件的 CodexAppServer 在本机 Windows 完成 initialize + model/list 只读握手（当时返回 7 个模型，随后关闭），未发起模型推理。桌面版模型菜单、真实回复、工具往返、取消后进程清理仍是未验证。",
-  "trModelOverride": "Codex：2026-10-31 直接调用 tr 0.9.24 / Codex CLI v0.162.1，显式 --model gpt-5.6-terra 时 CLI 横幅为 model: gpt-5.6-terra；不传 --model 时同一工作区横幅为 model: gpt-5.6-sol。这不是模型回复文本。2026-11-02 的 app-server thread/start 接受显式 model、dynamicTools、ephemeral 和 read-only sandbox，但仍未跑模型 turn。Grok：帮助里有 --model，但这次没有拿到 CLI 横幅，实机是否改写显式模型仍是待验证。Harness 桌面版内的两条路径都仍是未验证。"
+  "checkScope": "Installed desktop package contracts for tools.register, subprocess.spawn, Windows CreateProcessW, workingDirectory.ensure, and llm.registerAdapter. Model discovery uses tr codex debug models, tr grok models, Codex app-server model/list, and Grok ACP session/new. Verified in an isolated DSH_HOME/tr-e2e Web UI with real model replies; the formal Desktop plugin was not overwritten.",
+  "windowsPluginLoad": "隔离 profile 已加载并验证；正式 Desktop 未覆盖",
+  "windowsInAppToolCall": "tr_bridge 工具注册与既有测试通过；正式 Desktop 的一次性工具调用未覆盖",
+  "dynamicConfigDropdown": "已实现。0.2.1-rc.5 的 plugins.row.config 不渲染可见文字为「配置」的按钮，只把组件标题变成无障碍名称为「配置 {name}」的箭头。因此同时注册 plugins.detail.actions（可见按钮「配置」）和 plugins.bundle.config（键 dsh-tr-bridge，表单直接出现在插件详情）。行配置键仍是 dsh-tr-bridge#tr-bridge。入口是随包提供的 lib/client.js。下拉项来自宿主 Connection RPC 的当次 CLI 查询，不是 schema enum。配置页点击、刷新、保存和重启后保留仍只在隔离 profile 验证过。",
+  "nativeCodexProvider": "已实现 tr-codex：按 0.2.1-rc.5 的 LlmAdapter 契约注册，模型只来自 tr codex app-server 的 model/list（游标分页取完），选中 ID 原样传给 thread/start 与 turn/start，支持复用 thread、流式 text/reasoning/usage、dynamicTools、取消和超时。发现与执行共用同一个 cwd 和显式 catalogJson；2026-11-02 在隔离 Web UI 中选择 gpt-6.1-sol，thread/start 与 turn/start 都带该 ID，真实回复 UI_CODEX_OK。",
+  "nativeGrokProvider": "已实现 tr-grok：按 ACP v1 注册，模型只来自 session/new 的 models.availableModels（缺失时回退 configOptions），选中 ID 原样传给 session/set_config_option；prompt 结果的 _meta.modelId 用于核对实际身份。ACP 没有客户端动态工具通道，因此权限请求一律拒绝，tool_call 整轮报 UNSUPPORTED_TOOL_CALL，不伪装工具执行。2026-11-02 在隔离 Web UI 中选择 tokenrouter-grok-4.7 并真实回复 UI_GROK_OK；适配器探针核对 _meta.modelId = grok-4.7。",
+  "trModelOverride": "Codex：2026-10-31 直接调用 tr 0.9.24 / Codex CLI v0.162.1，显式 --model gpt-5.6-terra 时 CLI 横幅为 model: gpt-5.6-terra；不传 --model 时同一工作区横幅为 model: gpt-5.6-sol。2026-11-02 的 app-server 真实 turn 中，显式 gpt-6.1-sol 进入 thread/start 和 turn/start 并得到回复。Grok：显式 tokenrouter-grok-4.5/4.7 的 ACP 探针分别得到 _meta.modelId grok-4.5/4.7，说明路由别名没有被当成实际模型身份。"
 }

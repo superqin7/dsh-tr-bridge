@@ -10,9 +10,9 @@
  * Login stays in the existing TokenRouter config. This plugin does not read
  * or forward an API key.
  *
- * 0.2.0 also registers an optional native `tr-codex` LlmAdapter. It is
- * additive: if the llm service or launcher is unavailable, the two tools
- * above still register and behave exactly as before.
+ * 0.3.0 also registers optional native `tr-codex` and `tr-grok` LlmAdapters.
+ * They are additive: if the llm service or launcher is unavailable, the two
+ * tools above still register and behave exactly as before.
  */
 import {
   applySelectionChange,
@@ -34,7 +34,7 @@ import {
   workspaceOrTemp,
 } from './models.js'
 import { resolveTrLauncher } from './resolve-tr.js'
-import { defaultLlmCwd, registerTrCodexProvider } from './llm/providers.js'
+import { defaultLlmCwd, registerTrCodexProvider, registerTrGrokProvider } from './llm/providers.js'
 
 export const name = 'dsh-tr-bridge'
 export const inject = ['tools', 'subprocess', 'workingDirectory']
@@ -154,6 +154,14 @@ function readConfig(config = {}) {
     trCommand,
     timeoutMs,
     grokWebSearch: config.grokWebSearch === true,
+    llmCwd: typeof config.llmCwd === 'string' && config.llmCwd.trim()
+      ? config.llmCwd.trim()
+      : defaultLlmCwd(),
+    llmCatalogPath: config.llmCatalogPath === null
+      ? null
+      : (typeof config.llmCatalogPath === 'string' && config.llmCatalogPath.trim()
+          ? config.llmCatalogPath.trim()
+          : undefined),
     selection: selectionFromConfig(config),
     selectionFile: typeof config.selectionFile === 'string' && config.selectionFile.trim()
       ? config.selectionFile.trim()
@@ -384,16 +392,29 @@ export function apply(ctx, config = {}) {
   // missing llm service or launcher must not disable the existing bridge.
   const native = registerTrCodexProvider(ctx, {
     settings,
-    cwd: defaultLlmCwd(),
-    version: '0.2.0',
+    cwd: settings.llmCwd,
+    catalogJson: settings.llmCatalogPath,
+    version: '0.3.0',
   })
   if (native.ok === false && native.reason === 'llm-unavailable' && typeof ctx.inject === 'function') {
     ctx.inject(['llm'], child => {
       registerTrCodexProvider(child, {
         settings,
-        cwd: defaultLlmCwd(),
-        version: '0.2.0',
+        cwd: settings.llmCwd,
+        catalogJson: settings.llmCatalogPath,
+        version: '0.3.0',
       })
+      registerTrGrokProvider(child, {
+        settings,
+        cwd: settings.llmCwd,
+        version: '0.3.0',
+      })
+    })
+  } else {
+    registerTrGrokProvider(ctx, {
+      settings,
+      cwd: settings.llmCwd,
+      version: '0.3.0',
     })
   }
 

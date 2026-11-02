@@ -35,16 +35,21 @@ function reasoningOf(model) {
 }
 
 export function modelInfo(provider, model) {
-  const id = model?.slug ?? model?.model ?? model?.id
+  const id = model?.model ?? model?.slug ?? model?.id
   if (typeof id !== 'string' || !id) return undefined
   const hidden = model.hidden === true || model.visibility === 'hide' || model.visibility === 'hidden'
   if (hidden) return undefined
   const name = model.displayName ?? model.display_name ?? id
+  const reportedId = model?.id ?? model?.slug
   return {
     provider,
     id,
     name: typeof name === 'string' && name.trim() ? name.trim() : id,
     ...(typeof model.description === 'string' && model.description ? { description: model.description } : {}),
+    // Codex currently returns the same value for id and model. Keep the raw
+    // routing id when a future CLI reports an alias separately from identity.
+    ...(typeof reportedId === 'string' && reportedId && reportedId !== id ? { routingAlias: reportedId } : {}),
+    ...(model.isDefault === true ? { isDefault: true } : {}),
     inputModalities: ['text'],
     ...reasoningOf(model),
   }
@@ -79,6 +84,9 @@ export class CodexCatalog {
     const running = (async () => {
       try {
         const models = await this.server.models(signal)
+        if (!Array.isArray(models)) {
+          throw new TrLlmError('TR Codex model/list returned no model array.', 'PROTOCOL_ERROR')
+        }
         const seen = new Set()
         const entries = []
         for (const model of models) {
@@ -90,6 +98,7 @@ export class CodexCatalog {
         this.entries = entries
         this.loaded = true
         this.loadedAt = this.now()
+        this.pages = this.server.lastPagination?.pages
         this.issue = undefined
         return entries
       } catch (error) {
@@ -104,13 +113,10 @@ export class CodexCatalog {
   }
 
   async list(signal) {
-    try {
-      return await this.refresh(signal)
-    } catch {
-      // Keep the last good menu during a transient discovery failure. An empty
-      // first load still yields an empty list; nothing is invented.
-      return this.entries
-    }
+    // A menu fetch is an explicit request for the current CLI catalog. Do not
+    // serve a previous snapshot when discovery fails; the caller must see the
+    // failure instead of a menu that may no longer be authorized.
+    return this.refresh(signal, { force: true })
   }
 
   async resolve(provider, id, signal) {
@@ -123,9 +129,7 @@ export class CodexCatalog {
     try {
       await this.refresh(signal)
     } catch (error) {
-      if (!this.entries.length) {
-        throw new TrLlmError('TR Codex model discovery failed; retry after the CLI is reachable.', 'MODEL_DISCOVERY_FAILED', { cause: error })
-      }
+      throw new TrLlmError('TR Codex model discovery failed; retry after the CLI is reachable.', 'MODEL_DISCOVERY_FAILED', { cause: error })
     }
     let found = this.entries.find(entry => entry.id === id)
     if (!found) {

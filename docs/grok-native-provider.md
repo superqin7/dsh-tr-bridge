@@ -1,82 +1,70 @@
-# TR Grok 原生提供方：设计准备（不实现）
+# TR Grok 原生提供方（0.3.0 已实现）
 
-状态：**设计稿 / 未实现**。本文件只记录第二阶段允许的“共用传输层与独立设计”，不包含 Grok 代码，也不改变模型菜单。
+状态：**已实现，隔离 profile 的 Web UI 与真实推理已验证**。本文记录 `tr-grok` 的协议事实、能力边界和验收依据；它不是模型白名单，菜单只使用 CLI 当次返回的模型。
 
-## 1. 范围与门槛
+## 1. 范围
 
-- 本分支只实现 `tr-codex`。TR Grok 必须等 Codex 的 Desktop E2E 通过后再继续。
-- 不实现 `DSH_TOOL` 文本解析来冒充原生工具调用。
-- 不发起真实 Grok 调用，除非单独批准。
-- 不在配置页或模型菜单里提前展示 Grok 原生提供方。
+- 提供方 ID：`tr-grok`；显示名：**TR Grok**。
+- 和 `tr-codex` 一样，通过 `ctx.llm.registerAdapter` 注册，与普通 API 模型并列出现在 Harness 模型菜单，不改变已有默认模型。
+- 模型清单完全来自 ACP 的 `session/new`：优先 `models.availableModels`，缺失时回退 `configOptions` 中 `id: "model"` 的选项。不按 `grok-*` / `tokenrouter-*` 前缀过滤，也不内置数量或名称。
+- 选中的模型 ID 原样传给 `session/set_config_option`；CLI 回报的当前值不一致时抛 `MODEL_UNAVAILABLE`，不静默替换。
+- 实际执行模型从 `session/prompt` 结果的 `_meta.modelId` 读取。路由别名（例如 CLI 返回的 `tokenrouter-*`）和真实模型身份是两层信息，不混为一谈。
+- 不读取 TokenRouter/Grok 登录文件或 API Key；只启动已经登录的 `tr.exe`。
 
-## 2. 已确认的协议事实（只读探针）
+## 2. 已确认的 ACP 协议事实
 
-`tr grok agent stdio`（grok 1.0.30）是 ACP 风格 JSON-RPC：
+`tr grok agent --no-leader stdio` 使用 JSON-RPC over JSONL：
 
-| 方法 | 用途 | 本机只读结果 |
-| --- | --- | --- |
-| `initialize` | 握手 | 成功；`protocolVersion: 1`，`sessionCapabilities: {list, resume, close}` |
-| `session/new` | 建会话 | 成功；返回 `configOptions`、`_meta.modelState.availableModels` |
-| `session/set_config_option` | 切模型/参数 | **未执行** |
-| `session/prompt` | 一轮用户输入 | **未执行** |
-| `session/update` | 流式通知 | **未执行** |
-| `session/cancel` | 取消 | **未执行** |
-| `session/close` | 关闭 | **未执行** |
+| 方法 | 用途 |
+| --- | --- |
+| `initialize` | 握手；`protocolVersion: 1`，clientInfo 使用 `dsh_tr_bridge` |
+| `session/new` | 建会话；返回 `sessionId`、`models`（对象，含 `currentModelId` / `availableModels`）、`configOptions`、`_meta` |
+| `session/set_config_option` | 切模型；`configId: "model"`，`value` 是 CLI 返回的原始 id |
+| `session/prompt` | 发送一轮用户文本；返回 `stopReason` 和 `_meta.modelId` / `_meta.usage` |
+| `session/update` | 流式通知；`params.update.sessionUpdate` 区分 `agent_message_chunk`、`agent_thought_chunk`、`tool_call`、`tool_call_update`、`config_option_update`、`available_commands_update`、`plan` 等 |
+| `session/cancel` | 取消 |
+| `session/close` | 关闭 |
 
-`availableModels` 同时包含：
+`models` 在部分版本是对象而不是数组；把 `session.models` 直接当数组会得到空列表。解析器同时接受数组形式，以及 `configOptions` 回退。
 
-- `tokenrouter`（当前选中）；
-- `tokenrouter-grok-4.5/4.6/4.7/4.7-build-fast`（TokenRouter 路由别名）；
-- `grok-4.5/4.6`（CLI 原生 xAI 模型）。
+ACP 当前没有分页请求。如果 `session/new` 的模型结果带 `nextCursor`，适配器会报 `MODEL_DISCOVERY_FAILED`，而不是把第一页当成完整清单。Codex 的 `model/list` 则是真正的游标分页，按 `nextCursor` 取完所有页。
 
-`tr grok models` 的 notice 还说明 `tokenrouter` 使用自己的 API Key。原生提供方只应展示 **TokenRouter 路由别名**，并把底层模型（`grok-4.7` 等）作为说明信息；不能把裸 `grok-4.x` 混进“TR 设备授权”菜单。
+## 3. 工具能力：纯聊天，不伪装
 
-## 3. 关键协议缺口
+ACP v1 没有“客户端注册动态工具”的一等通道。对比 Codex app-server 的 `dynamicTools` / `item/tool/call`，Grok 只能：
 
-ACP v1 没有“客户端注册工具”的一等通道。对比：
+1. **纯聊天适配**：不向模型声明 Harness 工具；
+2. **MCP 桥**：让 Grok 通过 MCP 调用工具，需另行实现和验证；
+3. **文本约定**：在 prompt 里约定 JSON 再解析，本版本明确不做。
 
-- Codex app-server 有 `dynamicTools` 与 `item/tool/call`，Harness 工具由宿主执行；
-- Grok ACP 的 `session/update` 只有计划、消息、工具调用等通知，没有“请客户端执行这个 Harness 工具并回传结果”的请求方法。
+本版本选择 1：
 
-因此可选路径只有：
+- `stream()` 忽略 Harness 的 `tools` 列表，不把它们拼进 prompt；
+- 收到 `session/request_permission` 时由传输层拒绝（`outcome: "cancelled"`）；
+- 如果 CLI 仍产生 `tool_call` / `tool_call_update`，整轮抛 `UNSUPPORTED_TOOL_CALL`，不会假装工具已执行；
+- 系统提示明确告诉模型“本提供方只有文本聊天，Harness 工具不可用”。
 
-1. **纯聊天适配**：不提供 Harness 工具调用。模型仍可能尝试 CLI 原生工具；必须全部拒绝。
-2. **MCP 桥**：由 Harness 侧起一个 MCP server，让 Grok 通过 MCP 调用工具；需要验证 Grok 的 MCP 支持、权限和工具结果回流。
-3. **文本约定**：在 prompt 里约定 JSON，由适配器解析。可靠性、可注入性和流式工具结果都差，本阶段明确不做。
+## 4. 上下文与工作目录
 
-在本阶段，只能把 Grok 定位为“可靠纯聊天适配”候选；如果产品要求原生工具调用，Grok 应保持 NO-GO，直到 MCP 路径被验证。
+每轮使用新的 ACP session，发送 Harness 提供的完整文本 transcript；不在客户端伪造工具历史。`llmCwd` 是插件配置里的静态工作目录，也是发现和执行共用的目录。由于 LlmAdapter 接口没有提供会话实时工作区，切换 Harness 会话时不会自动改变这个静态 cwd；需要不同目录时请改插件配置。
 
-## 4. 可复用部分
+Grok 没有 Codex 那种“目录决定 custom catalog 是否加载”的问题；但为保持两个提供方行为一致，仍使用同一个 `llmCwd`。
 
-`llm/rpc.js` 已与 Codex 解耦：
+## 5. 能力边界
 
-- `LineBuffer`：任意 JSONL 子进程分帧；
-- `RpcPeer`：请求/响应、超时、AbortSignal；
-- `EventQueue`：按会话排队通知；
-- `TrLlmError`：统一错误码。
+- 只接受文本和文本工具结果；图片/文件输入明确拒绝。
+- `stop`、`temperature`、`maxTokens` 被拒绝，不静默忽略。
+- `reasoning_effort` 作为可选 ACP config 传给 CLI；CLI 不接受时报错。
+- 取消会发送 `session/cancel`，随后关闭 session。
+- 子进程 stderr 只计字节、不转发；不把协议内容写日志。
+- 进程断开、超时、模型撤销都会以明确错误码返回。
 
-Grok 还需要新增：
+## 6. 验收依据
 
-- `llm/grok-transport.js`：启动 `tr.exe grok agent stdio`，处理 `session/update` 分发与 `session/close`；
-- `llm/grok-catalog.js`：从 `session/new` 的 `availableModels` / `configOptions` 取 `tokenrouter-*`，TTL 刷新，下线报错；
-- `llm/grok-adapter.js`：`session/new` → `set_config_option(model)` → `session/prompt`，把 `session/update` 映射成 `StreamChunk`；`session/cancel` 对应取消；
-- 权限处理：对原生工具请求一律拒绝；如果做 MCP，再单独设计权限审批。
+2026-11-02 在 `D:\AI-team\tr-e2e-work`、隔离 `DSH_HOME`、`tr-e2e` profile 中：
 
-## 5. 设计约束
-
-- 只启动已经登录的 `tr.exe`，不读取 TokenRouter/Grok 登录文件或 API Key。
-- spawn 使用 `ctx.subprocess.spawn` 的显式 argv，Windows 只用 `.exe`，不经过 shell。
-- stderr 只计字节、不转发；stdout 的协议内容不写日志。
-- 模型 ID 原样传给 `set_config_option`；找不到时 `MODEL_UNAVAILABLE`，不静默替换。
-- 多轮上下文：优先复用 ACP session；无法复用时发送完整 transcript，而不是伪造工具历史。
-- 纯聊天适配必须在 README/模型描述里明确“不能调用 Harness 工具”，不能把文本约定包装成原生工具。
-
-## 6. 验证计划（待批准）
-
-1. `session/new` + `set_config_option` 后读取 `currentModelId`，确认模型真的切换。
-2. `session/prompt` 的流式 update 形态、结束标记、usage（若有）。
-3. 多轮上下文、取消、超时、进程退出与重启。
-4. 纯聊天能力下，拒绝原生工具的路径。
-5. 若走 MCP：工具发现、调用、结果、权限审批、取消的完整链路。
-
-在 Codex E2E 通过前，以上都不进入实现。
+- 菜单出现 **TR Grok**，展开后显示当次 ACP 返回的全部模型（包括裸模型和路由别名），不依赖写死清单。
+- 选择 `tokenrouter-grok-4.7` 后，UI 回复 `UI_GROK_OK`；选择 `tokenrouter-grok-4.5` 的适配器探针返回 `_meta.modelId = "grok-4.5"`，`tokenrouter-grok-4.7` 的探针返回 `_meta.modelId = "grok-4.7"`。
+- 菜单出现 **TR Codex**，展开 7 个当次 `model/list` 返回的模型；选择 `gpt-6.1-sol` 后 `thread/start` 和 `turn/start` 都带有 `model: "gpt-6.1-sol"`，回复 `UI_CODEX_OK`。
+- 重启隔离 Web 服务后，当前会话仍显示 `GPT-6.1-Sol`，选择被恢复。
+- 以上为隔离 profile 验证；未修改正式 Desktop 插件，未发布 Release。

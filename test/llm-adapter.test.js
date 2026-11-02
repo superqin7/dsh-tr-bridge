@@ -119,7 +119,9 @@ test('a dynamic tool call ends with tool-calls, then the result continues the sa
   const tool = {
     role: 'tool',
     source: { kind: 'tool', callId: 'call-1' },
-    content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'file body' }], isError: false }],
+    toolCallId: 'call-1',
+    content: [{ type: 'text', text: 'file body' }],
+    isError: false,
   }
   server.events.push({
     method: 'item/completed',

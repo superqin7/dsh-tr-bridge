@@ -46,13 +46,13 @@ test('catalog caches within TTL and rediscovers a revoked model', async () => {
   assert.ok(server.calls >= 2)
 })
 
-test('a discovery failure keeps the last good list but never invents a model', async () => {
+test('a discovery failure is reported instead of serving a stale menu', async () => {
   const server = fakeServer([{ slug: 'gpt-5.6-sol' }])
   const catalog = new CodexCatalog(server, { provider: 'tr-codex', ttlMs: 0 })
   assert.equal((await catalog.list()).length, 1)
   server.fail = new Error('offline')
-  assert.equal((await catalog.list()).length, 1)
-  await assert.rejects(catalog.resolve('tr-codex', 'unknown'), error => error.code === 'MODEL_UNAVAILABLE')
+  await assert.rejects(catalog.list(), /offline/)
+  await assert.rejects(catalog.resolve('tr-codex', 'gpt-5.6-sol'), error => error.code === 'MODEL_DISCOVERY_FAILED')
 })
 
 test('modelInfo never claims image input and transcript rejects it', () => {

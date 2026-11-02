@@ -16,7 +16,7 @@
 
 - This repository is **not** an official product, official fork, endorsed integration, or continuation maintained by any of the projects named above.
 - The one-shot bridge code in this repository was independently written for the `tr codex` and `tr grok` use case; it does **not directly copy source code** from the attributed projects.
-- The 0.2.0 native Codex transport (`llm/codex-app-server.js`, `llm/codex-adapter.js`) **adapts** the MIT-licensed dsh-connect app-server transport/event mapping for `tr.exe`, TokenRouter login and the Harness 0.2.1-rc.5 `StreamChunk` contract. The required copyright and permission notice is reproduced in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+- The 0.3.0 native Codex transport (`llm/codex-app-server.js`, `llm/codex-adapter.js`) **adapts** the MIT-licensed dsh-connect app-server transport/event mapping for `tr.exe`, TokenRouter login and the Harness 0.2.1-rc.5 `StreamChunk` contract. The Grok ACP transport/catalog/adapter (`llm/grok-*.js`) is independently implemented from the observed protocol. The required copyright and permission notice is reproduced in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 - It does **not** currently provide the group-chat UX or persistent multi-agent team orchestration found in other projects.
 - The names of other products and projects are used solely for attribution and compatibility descriptions. Their trademarks and original source remain under their respective owners and licenses.
 

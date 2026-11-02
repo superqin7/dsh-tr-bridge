@@ -35,11 +35,21 @@ export const CODEX_SAFETY_ARGS = [
   '-c', 'project_doc_max_bytes=0',
 ]
 
-export function codexAppServerArgv(command) {
+export function codexAppServerArgv(command, { catalogJson } = {}) {
   if (typeof command !== 'string' || !command.trim()) {
     throw new TrLlmError('TR Codex launcher path is empty.', 'LAUNCHER_MISSING')
   }
-  return [command, 'codex', ...CODEX_SAFETY_ARGS, 'app-server', '--stdio']
+  const argv = [command, 'codex', ...CODEX_SAFETY_ARGS]
+  if (catalogJson !== undefined && catalogJson !== null) {
+    if (typeof catalogJson !== 'string' || !catalogJson.trim()) {
+      throw new TrLlmError('TR Codex catalog path is empty.', 'LAUNCHER_MISSING')
+    }
+    // Codex reads this override before app-server starts. The literal is quoted
+    // as a TOML basic string so Windows backslashes survive argv unchanged.
+    argv.push('-c', `model_catalog_json=${JSON.stringify(catalogJson)}`)
+  }
+  argv.push('app-server', '--stdio')
+  return argv
 }
 
 export class CodexAppServer {
@@ -55,13 +65,17 @@ export class CodexAppServer {
     spawn,
     command,
     cwd,
+    env,
+    catalogJson,
     requestTimeoutMs = 30_000,
-    clientVersion = '0.2.0',
+    clientVersion = '0.3.0',
   } = {}) {
     if (typeof spawn !== 'function') throw new TrLlmError('DSH subprocess service is unavailable.', 'SUBPROCESS_UNAVAILABLE')
     this.spawn = spawn
     this.command = command
     this.cwd = cwd
+    this.env = env
+    this.catalogJson = catalogJson
     this.requestTimeoutMs = requestTimeoutMs
     this.clientVersion = clientVersion
   }
@@ -80,10 +94,11 @@ export class CodexAppServer {
   }
 
   async boot() {
-    const argv = codexAppServerArgv(this.command)
+    const argv = codexAppServerArgv(this.command, { catalogJson: this.catalogJson })
     const child = this.spawn({
       argv,
       cwd: this.cwd,
+      ...(this.env ? { env: this.env } : {}),
       stdio: { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
       graceMs: 3_000,
     })
@@ -126,7 +141,7 @@ export class CodexAppServer {
       this.stderrBytes = Math.min(MAX_STDERR_BYTES, this.stderrBytes + chunk.length)
     })
 
-    this.peer = new RpcPeer({ send: message => this.send(message), timeoutMs: this.requestTimeoutMs })
+    this.peer = new RpcPeer({ send: message => this.send(message), timeoutMs: this.requestTimeoutMs, label: 'TR Codex' })
     const done = child.done && typeof child.done.then === 'function' ? child.done : Promise.resolve({})
     done.then(
       status => this.fail(child, new TrLlmError(
@@ -227,17 +242,30 @@ export class CodexAppServer {
 
   async models(signal) {
     const models = []
-    const seen = new Set()
+    const seenCursors = new Set()
     let cursor
+    let pages = 0
     do {
       const result = await this.request('model/list', { limit: 100, ...(cursor ? { cursor } : {}) }, signal)
-      models.push(...(result.data ?? []))
-      cursor = result.nextCursor
-      if (cursor && seen.has(cursor)) {
+      if (!result || !Array.isArray(result.data)) {
+        throw new TrLlmError('TR Codex model/list returned no model array.', 'PROTOCOL_ERROR')
+      }
+      pages += 1
+      if (pages > 100) {
+        throw new TrLlmError('TR Codex model/list exceeded 100 pages.', 'PROTOCOL_ERROR')
+      }
+      models.push(...result.data)
+      const next = result.nextCursor
+      if (next !== undefined && next !== null && next !== '' && typeof next !== 'string') {
+        throw new TrLlmError('TR Codex model/list returned an invalid cursor.', 'PROTOCOL_ERROR')
+      }
+      cursor = next || undefined
+      if (cursor && seenCursors.has(cursor)) {
         throw new TrLlmError('TR Codex model pagination repeated a cursor.', 'PROTOCOL_ERROR')
       }
-      if (cursor) seen.add(cursor)
+      if (cursor) seenCursors.add(cursor)
     } while (cursor)
+    this.lastPagination = { pages, complete: true }
     return models
   }
 

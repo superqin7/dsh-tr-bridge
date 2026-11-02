@@ -70,6 +70,51 @@ test('argv uses a literal tr.exe and disables native Codex tools before app-serv
   assert.equal(argv.filter(part => part === '--stdio').length, 1)
 })
 
+test('an explicit catalog is passed as one Codex config argument', () => {
+  const argv = codexAppServerArgv('C:\\TokenRouter\\tr.exe', {
+    catalogJson: 'C:\\Users\\me\\.codex\\tokenrouter-model-catalog.json',
+  })
+  const index = argv.findIndex((part, i) => part === '-c' && argv[i + 1]?.startsWith('model_catalog_json='))
+  assert.ok(index > 0)
+  assert.equal(
+    argv[index + 1],
+    'model_catalog_json="C:\\\\Users\\\\me\\\\.codex\\\\tokenrouter-model-catalog.json"',
+  )
+  assert.deepEqual(argv.slice(-2), ['app-server', '--stdio'])
+})
+
+test('a null catalog means no override, not an empty path', () => {
+  const argv = codexAppServerArgv('C:\\TokenRouter\\tr.exe', { catalogJson: null })
+  assert.equal(argv.some(part => part.startsWith('model_catalog_json=')), false)
+  assert.deepEqual(argv.slice(-2), ['app-server', '--stdio'])
+})
+
+test('model/list follows every cursor and reports the complete page count', async () => {
+  const { server, spawns } = launch()
+  const starting = server.start()
+  await waitFor(() => spawns[0]?.child.messages.length > 0)
+  spawns[0].child.stdout.write(JSON.stringify({ id: spawns[0].child.messages[0].id, result: {} }) + '\n')
+  await starting
+
+  const listing = server.models()
+  await waitFor(() => spawns[0].child.messages.some(message => message.method === 'model/list'))
+  const first = spawns[0].child.messages.find(message => message.method === 'model/list')
+  spawns[0].child.stdout.write(JSON.stringify({
+    id: first.id,
+    result: { data: [{ model: 'a' }], nextCursor: 'page-2' },
+  }) + '\n')
+  await waitFor(() => spawns[0].child.messages.filter(message => message.method === 'model/list').length === 2)
+  const second = spawns[0].child.messages.filter(message => message.method === 'model/list').at(-1)
+  assert.deepEqual(second.params, { limit: 100, cursor: 'page-2' })
+  spawns[0].child.stdout.write(JSON.stringify({
+    id: second.id,
+    result: { data: [{ model: 'b' }], nextCursor: null },
+  }) + '\n')
+  assert.deepEqual(await listing, [{ model: 'a' }, { model: 'b' }])
+  assert.deepEqual(server.lastPagination, { pages: 2, complete: true })
+  server.close()
+})
+
 test('initialize, model/list and close use JSONL stdio without relaying stderr', async () => {
   const { server, spawns } = launch()
   const starting = server.start()

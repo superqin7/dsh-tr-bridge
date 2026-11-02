@@ -72,10 +72,19 @@ export class LineBuffer {
   }
 }
 
+function errorDetail(value) {
+  if (typeof value !== 'string') return ''
+  return value.trim()
+    .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:sk|ghp|gho|github_pat)_[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+    .slice(0, 2_000)
+}
+
 export class RpcPeer {
-  constructor({ send, timeoutMs = 30_000 }) {
+  constructor({ send, timeoutMs = 30_000, label = 'TR provider' }) {
     this.send = send
     this.timeoutMs = timeoutMs
+    this.label = label
     this.nextId = 1
     this.pending = new Map()
   }
@@ -92,7 +101,7 @@ export class RpcPeer {
       }
       const abort = () => finish(reject, signal.reason ?? new TrLlmError('Request aborted.', 'ABORTED'))
       const timer = setTimeout(
-        () => finish(reject, new TrLlmError(`TR Codex ${method} timed out.`, 'TR_LLM_TIMEOUT')),
+        () => finish(reject, new TrLlmError(`${this.label} ${method} timed out.`, 'TR_LLM_TIMEOUT')),
         timeoutMs,
       )
       this.pending.set(id, {
@@ -120,7 +129,16 @@ export class RpcPeer {
     const pending = this.pending.get(message.id)
     if (!pending) return true
     if (message.error) {
-      pending.reject(new TrLlmError(message.error.message ?? 'TR Codex rejected the request.', 'TR_LLM_RPC_ERROR'))
+      // ACP/Grok puts the only actionable text (for example the upstream
+      // authentication failure) in `data`, while `message` is the generic
+      // "Internal error". Keep a bounded string detail so the Harness turn
+      // reports the real cause instead of hiding it.
+      const detail = errorDetail(message.error.data)
+      const suffix = detail ? `: ${detail}` : ''
+      pending.reject(new TrLlmError(
+        `${message.error.message ?? 'TR Codex rejected the request.'}${suffix}`,
+        'TR_LLM_RPC_ERROR',
+      ))
     } else {
       pending.resolve(message.result)
     }

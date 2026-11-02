@@ -31,6 +31,31 @@ function keyOf(options) {
   return options.sessionId ? `${options.sessionId}:${options.purpose ?? 'conversation'}` : randomUUID()
 }
 
+/**
+ * Index tool results in the two shapes a Harness history can contain:
+ * the live transport's role=tool message (toolCallId on the message), and
+ * the older block form used by transcript fixtures.
+ */
+function toolResultsFrom(messages) {
+  const results = new Map()
+  for (const message of messages) {
+    if (message?.role === 'tool' && typeof message.toolCallId === 'string') {
+      results.set(message.toolCallId, {
+        text: contentText(message.content),
+        isError: message.isError === true,
+      })
+    }
+    for (const block of message?.content ?? []) {
+      if (block?.type !== 'tool-result' || typeof block.toolCallId !== 'string') continue
+      results.set(block.toolCallId, {
+        text: contentText(block.content),
+        isError: block.isError === true,
+      })
+    }
+  }
+  return results
+}
+
 export class CodexAdapter {
   sessions = new Map()
   busy = new Set()
@@ -168,19 +193,14 @@ export class CodexAdapter {
       if (!reuse) session = await this.fresh(options, specs, signature, key)
 
       if (session.pending.length) {
-        const results = new Map(
-          options.messages
-            .flatMap(message => message.content)
-            .filter(block => block?.type === 'tool-result')
-            .map(block => [block.toolCallId, block]),
-        )
+        const results = toolResultsFrom(options.messages)
         for (const call of session.pending) {
           const result = results.get(call.callId)
           if (!result) {
             throw new TrLlmError('Harness has not supplied the pending tool result.', 'INVALID_REQUEST')
           }
           this.server.respond(call.requestId, {
-            contentItems: [{ type: 'inputText', text: contentText(result.content) || '(no output)' }],
+            contentItems: [{ type: 'inputText', text: result.text || '(no output)' }],
             success: !result.isError,
           })
         }
